@@ -21,6 +21,7 @@ from app.models import (
     Device,
     HddState,
     IssueAck,
+    NetworkSwitch,
 )
 
 _QUALITY_LABEL = {
@@ -98,11 +99,11 @@ async def collect_issues(session: AsyncSession) -> list[dict]:
                         channel_id=c.channel_id, since=c.quality_checked_at)
 
                 r = cov.get((d.id, c.channel_id))
-                if r and r.status == ArchiveState.NONE:
+                if r and c.recording_mode == "continuous" and r.status == ArchiveState.NONE:
                     add(f"dev:{d.id}:ch:{c.channel_id}:archive", d, "critical", "archive",
                         f"Канал {c.channel_id}: нет архива за {latest_day.strftime('%d.%m')}",
                         "запись не ведётся", channel_id=c.channel_id)
-                elif r and r.status == ArchiveState.PARTIAL:
+                elif r and c.recording_mode == "continuous" and r.status == ArchiveState.PARTIAL:
                     add(f"dev:{d.id}:ch:{c.channel_id}:archive", d, "warning", "archive",
                         f"Канал {c.channel_id}: дыры в архиве за {latest_day.strftime('%d.%m')}",
                         f"макс. дыра {r.largest_gap_minutes} мин", channel_id=c.channel_id)
@@ -112,10 +113,47 @@ async def collect_issues(session: AsyncSession) -> list[dict]:
                     "Дрейф времени регистратора", f"⏱ {d.time_drift_seconds // 60} мин")
 
         for h in d.hdds:
-            if h.status in (HddState.ERROR, HddState.NO_DISK):
-                label = "ошибка диска" if h.status == HddState.ERROR else "нет диска"
+            if h.status in (HddState.ERROR, HddState.NO_DISK, HddState.UNFORMATTED,
+                            HddState.READ_ONLY, HddState.MISSING):
+                label = {HddState.ERROR: "ошибка диска", HddState.NO_DISK: "нет диска",
+                         HddState.UNFORMATTED: "не инициализирован", HddState.READ_ONLY: "только чтение",
+                         HddState.MISSING: "диск пропал"}[h.status]
                 add(f"dev:{d.id}:hdd:{h.hdd_id}", d, "critical", "hdd",
                     f"Диск {h.hdd_id}: {label}", h.name or "—")
+
+    # Новые причины здоровья дополняют прежние стабильные ключи квитирования.
+    from app.services.health import get_health_map
+    from app.services.switches import switch_health
+
+    health = await get_health_map(session, devices)
+    seen = {(i["device_id"], i["kind"], i["channel_id"]) for i in issues}
+    for device in devices:
+        for i in health[device.id]["issues"]:
+            kind = {"channels": "channel", "connection": "unreachable", "time": "drift"}.get(i["kind"], i["kind"])
+            identity = (device.id, kind, i.get("channel_id"))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            add(f"dev:{device.id}:health:{i['kind']}:{i.get('channel_id') or 'device'}",
+                device, i["severity"], kind, i["title"], i.get("detail") or "",
+                channel_id=i.get("channel_id"))
+
+    switches = (await session.execute(select(NetworkSwitch).where(NetworkSwitch.enabled.is_(True))
+                .options(selectinload(NetworkSwitch.ports)))).scalars().all()
+    for switch in switches:
+        state = switch_health(switch)
+        if state["state"] == "green":
+            continue
+        key = f"switch:{switch.id}:health"
+        a = acks.get(key)
+        issues.append({
+            "key": key, "device_id": None, "device_name": switch.name,
+            "target_url": f"/switches/{switch.id}", "channel_id": None,
+            "severity": "critical" if state["state"] == "red" else "warning",
+            "kind": "switch", "title": state["label"],
+            "detail": "; ".join(state["reasons"]), "since": None,
+            "ack": {"note": a.note, "by": a.ack_by, "at": a.ack_at.isoformat()} if a else None,
+        })
 
     # взятые в работу — вниз; внутри — критичные выше, затем по объекту
     issues.sort(key=lambda x: (

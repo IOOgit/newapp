@@ -8,22 +8,24 @@
   <div class="card"><span class="num">{{ stats.channels_down }}</span><span>Каналов не в норме</span></div>
 </section>
 
-{# --- агрегаты для диаграмм (считаются в шаблоне, бэкенд не трогаем) --- #}
-{% set ns = namespace(ch_total=0, ch_online=0, green=0) %}
-{% for d in devices %}
-  {% set ns.ch_total = ns.ch_total + (d.channels | length) %}
-  {% set ns.ch_online = ns.ch_online + (d.channels | selectattr('status','equalto','online') | list | length) %}
-  {% if device_health(d) == 'green' %}{% set ns.green = ns.green + 1 %}{% endif %}
+{# В знаменателях только устройства и каналы с включённым мониторингом. #}
+{% set ns = namespace(ch_total=0, ch_online=0, green=0, monitored=0) %}
+{% for d in devices if d.enabled %}
+  {% set monitored_channels = d.channels | selectattr('enabled') | list %}
+  {% set ns.monitored = ns.monitored + 1 %}
+  {% set ns.ch_total = ns.ch_total + (monitored_channels | length) %}
+  {% set ns.ch_online = ns.ch_online + ((monitored_channels | selectattr('status','equalto','online') | list | length) if d.reachable else 0) %}
+  {% if health_by_id[d.id].color == 'green' %}{% set ns.green = ns.green + 1 %}{% endif %}
 {% endfor %}
 {% set cam_pct = ((ns.ch_online / ns.ch_total * 100) | round | int) if ns.ch_total else 0 %}
-{% set obj_pct = ((ns.green / stats.devices_total * 100) | round | int) if stats.devices_total else 0 %}
+{% set obj_pct = ((ns.green / ns.monitored * 100) | round | int) if ns.monitored else 0 %}
 {% set arch_total = (archive.totals.full + archive.totals.partial + archive.totals.none) if archive.day else 0 %}
 {% set arch_pct = ((archive.totals.full / arch_total * 100) | round | int) if arch_total else 0 %}
 
 <section class="kpi-row" style="margin-top:18px;">
   {# Кольцо: камеры онлайн #}
   <div class="chart-card kpi-viz">
-    <div class="chart-head"><h3>Камеры</h3><span class="sub">{{ ns.ch_total }} всего</span></div>
+    <div class="chart-head"><h3>Камеры</h3><span class="sub">{{ ns.ch_total }} под контролем</span></div>
     <div class="viz-body">
       <div class="ring-flex">
         <div class="ring" style="--p:{{ cam_pct }}">
@@ -39,13 +41,13 @@
 
   {# Gauge: объекты в норме #}
   <div class="chart-card kpi-viz">
-    <div class="chart-head"><h3>Объекты в норме</h3><span class="sub">{{ ns.green }} / {{ stats.devices_total }}</span></div>
+    <div class="chart-head"><h3>NVR в норме</h3><span class="sub">{{ ns.green }} / {{ ns.monitored }}</span></div>
     <div class="viz-body">
       <div class="gauge-wrap">
         <div class="gauge" style="--p:{{ obj_pct }}">
           <div class="g-arc"></div><div class="g-hole"></div><div class="g-val">{{ obj_pct }}%</div>
         </div>
-        <span class="g-cap">аптайм парка</span>
+        <span class="g-cap">состояние сейчас</span>
       </div>
     </div>
   </div>
@@ -56,11 +58,12 @@
     <div class="chart-head"><h3>Покрытие архива</h3><span class="sub">за {{ archive.day[8:10] }}.{{ archive.day[5:7] }}</span></div>
     <div class="viz-body">
       <div class="ring-flex">
-        <div class="ring ok" style="--p:{{ arch_pct }}"><span class="ring-val">{{ arch_pct }}%<small>с записью</small></span></div>
+        <div class="ring {{ 'ok' if arch_total else '' }}" style="--p:{{ arch_pct }}"><span class="ring-val">{{ (arch_pct ~ '%') if arch_total else '—' }}<small>из проверенных</small></span></div>
         <div class="ring-legend">
           <span class="lg"><span class="d" style="background:var(--ok)"></span>С записью <b>{{ archive.totals.full }}</b></span>
           <span class="lg"><span class="d" style="background:var(--warn)"></span>Дыры <b>{{ archive.totals.partial }}</b></span>
           <span class="lg"><span class="d" style="background:var(--err)"></span>Без записи <b>{{ archive.totals.none }}</b></span>
+          <span class="lg"><span class="d" style="background:var(--muted)"></span>Нет данных <b>{{ archive.totals.no_data }}</b></span>
         </div>
       </div>
     </div>
@@ -120,28 +123,32 @@
   <thead><tr><th></th><th>Объект</th><th>Группа</th><th>Host</th><th>Тип</th><th>Каналы</th><th>Статус</th><th>Архив</th></tr></thead>
   <tbody>
   {% for d in devices %}
-    {% set health = device_health(d) %}
-    {% set up = d.channels | selectattr('status','equalto','online') | list | length %}
+    {% set health = health_by_id[d.id] %}
+    {% set monitored_channels = d.channels | selectattr('enabled') | list %}
+    {% set up = (monitored_channels | selectattr('status','equalto','online') | list | length) if d.reachable else 0 %}
     <tr>
-      <td><span class="dot {{ health }}"></span></td>
+      <td><span class="dot {{ health.color }}" title="{{ health.label }}"></span></td>
       <td><a href="/devices/{{ d.id }}">{{ d.name }}</a></td>
       <td>{{ groups[d.group_id].name if d.group_id else '—' }}</td>
       <td>{{ d.host }}:{{ d.http_port }}</td>
       <td>{{ d.api_type }}{% if d.model %} · {{ d.model }}{% endif %}</td>
-      <td>{{ up }}/{{ d.channels|length }}</td>
+      <td>{% if d.enabled %}{{ up }}/{{ monitored_channels|length }}{% else %}<span class="muted">отключён</span>{% endif %}</td>
       <td>
-        {% if not d.reachable %}<span class="badge err">недоступен</span>
-        {% elif health == 'yellow' %}<span class="badge warn">есть проблемы</span>
-        {% else %}<span class="badge ok">норма</span>{% endif %}
-        {% if d.time_drift_seconds and d.time_drift_seconds > 300 %}
-          <span class="badge warn" title="дрейф времени">⏱ {{ (d.time_drift_seconds//60) }}м</span>
+        <span class="badge {{ {'green':'ok','yellow':'warn','red':'err','gray':'muted'}.get(health.color, 'muted') }}">{{ health.label }}</span>
+        {% for issue in health.issues[:2] %}
+          <div style="font-size:12px;margin-top:4px" title="{{ issue.detail }}">{{ issue.title }}</div>
+        {% endfor %}
+        {% if health.issues|length > 2 %}
+          <a class="muted" style="font-size:12px" href="/devices/{{ d.id }}#monitoring-health">Ещё {{ health.issues|length - 2 }}</a>
         {% endif %}
       </td>
       <td>
         {% set a = arch_by_id.get(d.id) %}
         {% if a and a.total %}
-          <span class="dot {{ a.status }}" title="запись {{ a.full }}/{{ a.total }}{% if a.partial %}, частично {{ a.partial }}{% endif %}{% if a.none %}, без записи {{ a.none }}{% endif %}{% if a.no_data %}, нет данных {{ a.no_data }}{% endif %}"></span>
-          {{ a.full }}/{{ a.total }}{% if a.none %} <span class="badge err">{{ a.none }}✖</span>{% elif a.partial %} <span class="badge warn">{{ a.partial }}!</span>{% endif %}
+          {% set checked_archive = a.full + a.partial + a.none %}
+          <span class="dot {{ a.status if checked_archive else 'gray' }}" title="Полная запись: {{ a.full }} из {{ checked_archive }} проверенных; нет данных: {{ a.no_data }}"></span>
+          {% if checked_archive %}{{ a.full }}/{{ checked_archive }}{% else %}<span class="muted">не проверен</span>{% endif %}{% if a.none %} <span class="badge err">{{ a.none }}✖</span>{% elif a.partial %} <span class="badge warn">{{ a.partial }}!</span>{% endif %}
+          {% if a.no_data %}<div class="muted" style="font-size:12px">Нет данных: {{ a.no_data }}</div>{% endif %}
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
     </tr>
@@ -171,9 +178,9 @@
 <div class="chart-card">
   <div class="chart-head"><h3 class="muted" style="font-weight:600">% занято по объектам</h3><span class="sub">макс. диск на объекте</span></div>
   <div class="barlist">
-    {% for d in devices if d.hdds %}
-      {% set use = (d.hdds | map(attribute='usage_percent') | max) | round | int %}
-      <div class="bar {{ 'err' if use >= 90 else 'warn' if use >= 80 else '' }}">
+    {% for d in devices if d.hdds | selectattr('present') | list %}
+      {% set use = (d.hdds | selectattr('present') | map(attribute='usage_percent') | max) | round | int %}
+      <div class="bar">
         <span class="bar-label"><b>{{ d.name }}</b></span>
         <span class="bar-track"><i class="bar-fill" style="--p:{{ use }}"></i></span>
         <span class="bar-val">{{ use }}%</span>
@@ -182,5 +189,6 @@
       <span class="muted">Нет данных о дисках.</span>
     {% endfor %}
   </div>
+  <p class="muted" style="font-size:12px;margin:12px 0 0">При циклической перезаписи заполненный диск — нормальное состояние. Готовность HDD и свежесть записи проверяются отдельно.</p>
 </div>
 {% endblock %}

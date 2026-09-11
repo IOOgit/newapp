@@ -39,7 +39,7 @@
   <div class="wl-empty">✅ Проблем нет — все объекты в норме.</div>
 {% else %}
 <div class="wl-list">
-  {% set kind_icon = {'unreachable':'🔌','channel':'📴','quality':'📷','drift':'🕐','archive':'🎞','hdd':'💽'} %}
+  {% set kind_icon = {'unreachable':'🔌','channel':'📴','quality':'📷','drift':'🕐','archive':'🎞','hdd':'💽','recording':'🎞','switch':'🔀'} %}
   {% for i in issues %}
   <div class="wl-item sev-{{ i.severity }} {{ 'taken' if i.ack else '' }}"
        data-sev="{{ i.severity }}" data-taken="{{ '1' if i.ack else '0' }}">
@@ -47,7 +47,7 @@
     <div class="wl-main">
       <div class="wl-title">
         <span class="wl-icon">{{ kind_icon.get(i.kind, '⚠️') }}</span>
-        <a href="/devices/{{ i.device_id }}">{{ i.device_name }}</a>
+        <a href="{{ i.target_url if i.target_url is defined else '/devices/' ~ i.device_id }}">{{ i.device_name }}</a>
         <span class="wl-sep">·</span> {{ i.title }}
       </div>
       <div class="wl-meta">

@@ -17,6 +17,15 @@ function formData() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Здесь только UTC-метки проверок; время самих записей показывает шаблон NVR.
+  document.querySelectorAll("time[data-monitoring-time]").forEach((el) => {
+    const value = el.dataset.monitoringTime;
+    const stamp = new Date(value);
+    if (!Number.isNaN(stamp.getTime())) {
+      el.dateTime = value;
+      el.textContent = stamp.toLocaleString("ru-RU");
+    }
+  });
   const modal = $("#modal");
   const openBtn = $("#add-device-btn");
   if (openBtn) openBtn.onclick = (e) => { e.preventDefault(); modal.classList.remove("hidden"); };
@@ -55,6 +64,50 @@ document.addEventListener("DOMContentLoaded", () => {
 async function pollNow(id) {
   await fetch(`/api/devices/${id}/poll`, { method: "POST" });
   location.reload();
+}
+function recordingFeedback(message, failed = false) {
+  const out = document.getElementById("recording-action-result");
+  if (out) {
+    out.hidden = false;
+    out.className = failed ? "err-text" : "muted";
+    out.textContent = message;
+  }
+}
+async function recordingCheck(id, button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Проверяем запись…";
+  recordingFeedback("Проверяем свежие фрагменты архива по каналам…");
+  try {
+    const response = await fetch(`/api/devices/${id}/recording-check`, { method: "POST" });
+    if (!response.ok) throw new Error(await response.text());
+    location.reload();
+  } catch (error) {
+    recordingFeedback("Не удалось проверить запись: " + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+async function setRecordingMode(deviceId, channelId, select) {
+  const previous = select.dataset.previousMode;
+  const mode = select.value;
+  select.disabled = true;
+  recordingFeedback(`Сохраняем ожидаемый режим записи канала ${channelId}…`);
+  try {
+    const response = await fetch(`/api/devices/${deviceId}/channels/${channelId}/recording`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recording_mode: mode }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    select.dataset.previousMode = mode;
+    location.reload();
+  } catch (error) {
+    select.value = previous;
+    recordingFeedback("Не удалось сохранить режим: " + error.message, true);
+  } finally {
+    select.disabled = false;
+  }
 }
 async function editCoords(id, lat, lon) {
   const cur = (lat !== null ? lat : "") + ", " + (lon !== null ? lon : "");

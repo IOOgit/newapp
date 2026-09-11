@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import crud
 from app.api.monitoring import archive_calendar, archive_overview, summary
 from app.database import get_session
+from app.services.health import evaluate_device, get_health_map
 from app.models import ArchiveCoverage, AuditLog, ChannelState, Group, PlanMarker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,15 +26,8 @@ router = APIRouter(tags=["dashboard"])
 
 
 def _device_health(device) -> str:
-    """green / yellow / red для индикации статуса объекта."""
-    if not device.enabled:
-        return "gray"
-    if not device.reachable:
-        return "red"
-    down = [c for c in device.channels if c.enabled and c.status != ChannelState.ONLINE]
-    if down:
-        return "yellow"
-    return "green"
+    """Совместимость шаблонов: единая оценка состояния NVR."""
+    return evaluate_device(device)["color"]
 
 
 templates.env.globals["device_health"] = _device_health
@@ -44,6 +38,7 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)):
     devices = await crud.list_devices(session)
     groups = {g.id: g for g in (await session.execute(select(Group))).scalars()}
     stats = await summary(session)
+    health_by_id = await get_health_map(session, devices)
     events = await crud.list_events(session, limit=20)
     archive = await archive_overview(session)
     arch_by_id = {a["device_id"]: a for a in archive["devices"]}
@@ -66,6 +61,7 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)):
             "devices": devices,
             "groups": groups,
             "stats": stats,
+            "health_by_id": health_by_id,
             "events": events,
             "archive": archive,
             "arch_by_id": arch_by_id,
@@ -196,7 +192,8 @@ async def plan_page(request: Request, session: AsyncSession = Depends(get_sessio
     ch_status = {
         (d.id, c.channel_id): c.status for d in devices for c in d.channels
     }
-    health = {d.id: _device_health(d) for d in devices}
+    health_map = await get_health_map(session, devices)
+    health = {d.id: health_map[d.id]["color"] for d in devices}
     marker_rows = []
     for m in markers:
         if m.channel_id is not None:
@@ -329,6 +326,7 @@ async def device_page(
         return HTMLResponse("Устройство не найдено", status_code=404)
     events = await crud.list_events(session, device_id=device_id, limit=50)
     calendar = await archive_calendar(device_id, days=14, session=session)
+    health = (await get_health_map(session, [device]))[device.id]
     return templates.TemplateResponse(
         "device.html",
         {
@@ -336,6 +334,7 @@ async def device_page(
             "device": device,
             "events": events,
             "calendar": calendar,
+            "health": health,
             "now": dt.datetime.utcnow(),
         },
     )

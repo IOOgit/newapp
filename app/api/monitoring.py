@@ -21,36 +21,41 @@ router = APIRouter(prefix="/api", tags=["monitoring"])
 
 @router.get("/summary")
 async def summary(session: AsyncSession = Depends(get_session)):
-    devices = (await session.execute(select(Device))).scalars().all()
-    total = len(devices)
-    online = sum(1 for d in devices if d.reachable and d.enabled)
-    unreachable = sum(1 for d in devices if not d.reachable and d.enabled)
+    from app.services.health import get_health_map
 
-    channels_down = (
-        await session.execute(
-            select(func.count())
-            .select_from(Channel)
-            .where(Channel.status != ChannelState.ONLINE, Channel.enabled.is_(True))
-        )
-    ).scalar() or 0
-
-    # устройства с проблемами: недоступны, есть offline-каналы или дрейф времени
-    problem_device_ids: set[int] = {d.id for d in devices if not d.reachable and d.enabled}
-    rows = (
-        await session.execute(
-            select(Channel.device_id).where(
-                Channel.status != ChannelState.ONLINE, Channel.enabled.is_(True)
-            )
-        )
-    ).scalars()
-    problem_device_ids.update(rows)
-
+    devices = await crud.list_devices(session)
+    health = await get_health_map(session, devices)
+    enabled = [d for d in devices if d.enabled]
     return {
-        "devices_total": total,
-        "devices_online": online,
-        "devices_unreachable": unreachable,
-        "devices_with_problems": len(problem_device_ids),
-        "channels_down": channels_down,
+        "devices_total": len(devices),
+        "devices_enabled": len(enabled),
+        "devices_online": sum(1 for d in enabled if d.reachable),
+        "devices_unreachable": sum(1 for d in enabled if not d.reachable),
+        "devices_healthy": sum(1 for d in enabled if health[d.id]["color"] == "green"),
+        "devices_with_problems": sum(1 for d in enabled if health[d.id]["color"] in ("yellow", "red")),
+        "devices_unknown": sum(1 for d in enabled if health[d.id]["color"] == "gray"),
+        "channels_down": sum(1 for d in enabled for c in d.channels
+                             if c.enabled and c.status != ChannelState.ONLINE),
+    }
+
+
+@router.get("/monitoring/health")
+async def monitoring_health(session: AsyncSession = Depends(get_session)):
+    """Общая оценка для дашборда и TV; время ответа не заменяет время опроса NVR."""
+    from app.services.health import get_health_map
+    from app.models import utcnow
+
+    devices = await crud.list_devices(session)
+    health = await get_health_map(session, devices)
+    return {
+        "updated_at": utcnow().isoformat(),
+        "devices": [
+            {"id": d.id, "name": d.name, "enabled": d.enabled, "reachable": d.reachable,
+             "channels_total": sum(1 for c in d.channels if c.enabled),
+             "channels_online": sum(1 for c in d.channels if c.enabled and c.status == ChannelState.ONLINE),
+             "health": health[d.id]}
+            for d in devices
+        ],
     }
 
 
@@ -182,7 +187,7 @@ async def archive_overview(session: AsyncSession, day: dt.date | None = None) ->
             status = "gray"
         elif cnt["none"]:
             status = "red"
-        elif cnt["partial"]:
+        elif cnt["partial"] or cnt["no_data"]:
             status = "yellow"
         else:
             status = "green"

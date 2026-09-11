@@ -12,7 +12,7 @@ from app.database import get_session
 from app.drivers import build_client, detect_api_type
 from app.drivers.base import NVRError
 from app.models import ApiType, Channel, Device, Note
-from app.services import archive, audit, bulkops, poller, quality
+from app.services import archive, audit, bulkops, poller, quality, recording
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["devices"])
@@ -124,6 +124,44 @@ async def test_connection(data: schemas.TestConnectionRequest):
 
 
 # ── Ручной запуск опроса / проверки архива ──────────────────────────────────────
+@router.post("/devices/{device_id}/recording-check")
+async def recording_check_now(
+    device_id: int, request: Request, session: AsyncSession = Depends(get_session),
+):
+    device = await crud.get_device(session, device_id)
+    if device is None:
+        raise HTTPException(404, "Устройство не найдено")
+    if not device.enabled:
+        raise HTTPException(409, "Мониторинг устройства отключён")
+    if not await recording.check_recording_device(session, device):
+        raise HTTPException(409, "Проверка записи этого NVR уже выполняется")
+    await session.commit()
+    await audit.log_action(session, request, "recording_check", target=device.name)
+    return {"ok": True}
+
+
+@router.put("/devices/{device_id}/channels/{channel_id}/recording", response_model=schemas.ChannelOut)
+async def set_recording_mode(
+    device_id: int, channel_id: int, data: schemas.RecordingModeUpdate, request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    channel = (await session.execute(select(Channel).where(
+        Channel.device_id == device_id, Channel.channel_id == channel_id,
+    ))).scalar_one_or_none()
+    if channel is None:
+        raise HTTPException(404, "Канал не найден")
+    channel.recording_mode = data.recording_mode
+    channel.recording_status = "disabled" if data.recording_mode == "disabled" else "unknown"
+    channel.recording_checked_at = None
+    channel.recording_age_seconds = None
+    channel.recording_error = None
+    await session.commit()
+    await audit.log_action(session, request, "recording_mode",
+                           target=f"устройство {device_id} канал {channel_id}",
+                           detail=data.recording_mode)
+    return channel
+
+
 @router.post("/devices/{device_id}/poll")
 async def poll_now(device_id: int, session: AsyncSession = Depends(get_session)):
     device = await crud.get_device(session, device_id)
