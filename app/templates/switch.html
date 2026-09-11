@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}{{ switch.name }} — Коммутатор — NVR Monitor{% endblock %}
+{% block content %}
+{% set status_classes = {'green':'ok', 'yellow':'warn', 'red':'err', 'gray':'muted'} %}
+{% set poe_snapshot_fresh = switch.reachable and not switch.health.stale and switch.capabilities.get('poe_ports') == 'supported' %}
+{% set link_labels = {1:'Есть связь', 2:'Нет связи', 3:'Тестирование', 4:'Неизвестно', 5:'Ожидание', 6:'Нет интерфейса', 7:'Нижележащая связь недоступна'} %}
+{% set poe_labels = {1:'Отключено', 2:'Поиск устройства', 3:'Питание подаётся', 4:'Неисправность', 5:'Проверка', 6:'Другая неисправность'} %}
+<style>
+.sw-section { margin-top: 24px; }
+.sw-table-wrap { overflow-x: auto; }
+.sw-table-wrap table { min-width: 880px; }
+.sw-sub { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.sw-message { padding: 14px 18px; margin: 14px 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.sw-message.warn { border-color: var(--warn); }
+.sw-message.err { border-color: var(--err); }
+.sw-message p { margin: 5px 0; }
+.sw-port-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin: 12px 0; }
+.sw-port-tile { display: block; border: 1px solid var(--line-2); border-top: 4px solid var(--muted); border-radius: var(--radius-xs); background: var(--panel); padding: 10px; color: var(--text); }
+.sw-port-tile.green { border-top-color: var(--ok); }.sw-port-tile.yellow { border-top-color: var(--warn); }.sw-port-tile.red { border-top-color: var(--err); }
+.sw-port-tile strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sw-form input[type=checkbox] { width: auto; margin: 0 8px 0 0; }
+.sw-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sw-scope button:disabled, .sw-form button:disabled { opacity: .55; cursor: wait; }
+.sw-scope td { vertical-align: top; }.sw-scope td small { white-space: nowrap; }
+.sw-caption { color: var(--muted); font-size: 12px; }
+</style>
+<div class="sw-scope">
+<a href="/switches" class="muted">← к коммутаторам</a>
+<div class="device-head">
+  <h1>{{ switch.name }}</h1>
+  <div class="device-actions">
+    <button type="button" id="sw-poll">Опросить сейчас</button>
+    <button type="button" class="secondary" id="sw-edit-open">Настройки</button>
+    <button type="button" class="danger" id="sw-delete">Удалить</button>
+  </div>
+</div>
+<div id="sw-action-error" class="err-text sw-error" role="alert"></div>
+<div class="sw-message {{ status_classes.get(switch.health.state, 'muted') }}">
+  <span class="badge {{ status_classes.get(switch.health.state, 'muted') }}">{{ switch.health.label }}</span>
+  {% if switch.health.stale %}<span class="badge warn">Данные устарели</span>{% endif %}
+  {% for reason in switch.health.reasons %}<p>{{ reason }}</p>{% endfor %}
+  {% if switch.last_error %}<p class="err-text">Последний опрос: {{ switch.last_error }}</p>{% endif %}
+</div>
+<section class="info-grid">
+  <div><b>Адрес:</b> {{ switch.host }}:{{ switch.snmp_port }}</div>
+  <div><b>Модель:</b> {{ switch.model or '—' }}</div>
+  <div><b>Объект:</b> {% set selected_group = namespace(name='Без объекта') %}{% for group in groups %}{% if group.id == switch.group_id %}{% set selected_group.name = group.name %}{% endif %}{% endfor %}{{ selected_group.name }}</div>
+  <div><b>Мониторинг:</b> {{ 'включён' if switch.enabled else 'выключен' }} · SNMPv{{ switch.snmp_version }}</div>
+  <div><b>Имя устройства:</b> {{ switch.sys_name or '—' }}</div>
+  <div><b>Время работы SNMP-агента:</b> {% if switch.uptime_ticks is not none %}{% set uptime_seconds = switch.uptime_ticks // 100 %}{{ uptime_seconds // 86400 }} дн. {{ (uptime_seconds % 86400) // 3600 }} ч. {{ (uptime_seconds % 3600) // 60 }} мин.{% else %}—{% endif %}</div>
+  <div><b>Успешный опрос:</b> {{ switch.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}</div>
+  <div><b>Последняя попытка:</b> {{ switch.last_attempt_at|localtime('%d.%m.%Y %H:%M:%S') }}</div>
+  {% if switch.sys_descr %}<div style="grid-column:1/-1;overflow-wrap:anywhere"><b>Описание устройства:</b> {{ switch.sys_descr }}</div>{% endif %}
+</section>
+
+<section class="sw-section">
+  <h2>Порты и камеры</h2>
+  <p class="muted">Включите контроль связи для занятых портов и uplink. Для камеры выберите канал NVR. Номера интерфейсов SNMP могут отличаться от надписей на корпусе.</p>
+  {% if switch.ports %}
+  <div class="sw-port-map" aria-label="Состояние интерфейсов">
+    {% for port in switch.ports %}<a class="sw-port-tile {{ port.health.state }}" href="#sw-port-{{ port.id }}" title="{{ port.description or port.name }} — {{ port.health.label }}"><strong>{{ port.name or ('#' ~ port.if_index) }}</strong><span class="sw-sub">{{ port.health.label }}</span></a>{% endfor %}
+  </div>
+  {% endif %}
+  {% if switch.capabilities.get('interfaces') == 'unsupported' %}<p class="sw-message">Таблица интерфейсов не поддерживается или недоступна с текущими правами SNMP.</p>{% elif switch.capabilities.get('interfaces') == 'error' %}<p class="sw-message warn">Не удалось обновить таблицу интерфейсов. Ниже могут отображаться результаты предыдущего опроса.</p>{% endif %}
+  <div class="sw-table-wrap"><table class="grid">
+    <thead><tr><th>Интерфейс</th><th>Состояние</th><th>Скорость / трафик</th><th>Ошибки / потери</th><th>Камера / контроль</th><th>PoE</th></tr></thead>
+    <tbody>
+    {% for port in switch.ports %}
+    <tr id="sw-port-{{ port.id }}">
+      <td><strong>{{ port.name or ('#' ~ port.if_index) }}</strong><span class="sw-sub">ifIndex {{ port.if_index }}{% if port.alias %} · {{ port.alias }}{% endif %}</span>{% if port.description and port.description != port.name %}<span class="sw-sub">{{ port.description }}</span>{% endif %}<span class="sw-sub">Данные: {{ port.observed_at|localtime('%d.%m %H:%M:%S') }}</span></td>
+      <td><span class="badge {{ status_classes.get(port.health.state, 'muted') }}">{{ port.health.label }}</span><span class="sw-sub">{{ link_labels.get(port.oper_status, 'Нет данных о связи') }}</span>{% if port.admin_status == 2 %}<span class="sw-sub">Административно выключен</span>{% elif port.admin_status == 3 %}<span class="sw-sub">Административно: тестирование</span>{% endif %}{% if not port.present %}<span class="sw-sub">Не найден при опросе</span>{% endif %}{% for reason in port.health.reasons %}<span class="sw-sub">{{ reason }}</span>{% endfor %}</td>
+      <td>{% if port.speed_mbps is not none %}{{ port.speed_mbps|round(1) }} Мбит/с{% else %}<span class="muted">Скорость неизвестна</span>{% endif %}<span class="sw-sub">Вход: {% if port.in_bps is not none %}{{ (port.in_bps / 1000000)|round(3) }} Мбит/с{% else %}—{% endif %}</span><span class="sw-sub">Выход: {% if port.out_bps is not none %}{{ (port.out_bps / 1000000)|round(3) }} Мбит/с{% else %}—{% endif %}</span></td>
+      <td><small>Ошибки: {{ port.in_error_delta if port.in_error_delta is not none else '—' }} / {{ port.out_error_delta if port.out_error_delta is not none else '—' }}</small><br><small>Потери: {{ port.in_discard_delta if port.in_discard_delta is not none else '—' }} / {{ port.out_discard_delta if port.out_discard_delta is not none else '—' }}</small><span class="sw-sub">вход / выход за интервал</span></td>
+      <td>{% set mapped = namespace(found=false) %}{% for channel in channels %}{% if channel.id == port.channel_ref_id %}{% set mapped.found = true %}<a href="/devices/{{ channel.device_id }}">{{ channel.device_name }} · {{ channel.channel_index }}{% if channel.name %} · {{ channel.name }}{% endif %}</a>{% endif %}{% endfor %}{% if not mapped.found %}<span class="muted">Камера не назначена</span>{% endif %}<span class="sw-sub">Контроль связи: {{ 'включён' if port.expected_up else 'выключен' }}</span><button type="button" class="mini sw-port-edit" data-port-id="{{ port.id }}" data-port-name="{{ port.name or ('#' ~ port.if_index) }}" data-expected-up="{{ '1' if port.expected_up else '0' }}" data-channel-id="{{ port.channel_ref_id or '' }}" data-poe-index="{{ port.poe_index or '' }}">Назначить / изменить</button></td>
+      <td>{% if port.poe_index %}{% set poe = switch.poe_ports.get(port.poe_index) %}{% if poe %}<span class="badge {{ ('ok' if poe.get('detection_status') == 3 else ('err' if poe.get('detection_status') in [4, 6] else ('warn' if poe.get('detection_status') == 5 else 'muted'))) if poe_snapshot_fresh else 'muted' }}">{% if not poe_snapshot_fresh %}Последние данные: {% endif %}{{ poe_labels.get(poe.get('detection_status'), 'Нет данных') }}</span><span class="sw-sub">PoE {{ port.poe_index }}</span>{% else %}<span class="muted">Нет данных для PoE {{ port.poe_index }}</span>{% endif %}{% else %}<span class="muted">Не сопоставлен</span>{% endif %}</td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="muted">Порты ещё не обнаружены. Выполните опрос и проверьте доступ к IF-MIB.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <p class="sw-caption">Трафик и приращение ошибок рассчитываются по двум успешным опросам. «—» означает отсутствие достоверного расчёта. Вход и выход указаны относительно коммутатора.</p>
+</section>
+
+<section class="sw-section">
+  <h2>Питание PoE</h2>
+  <p class="sw-caption">Последний успешный опрос SNMP: {{ switch.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}. {% if not poe_snapshot_fresh %}Актуальное состояние питания по портам не подтверждено.{% endif %}</p>
+  <p class="muted">Данные стандартной POWER-ETHERNET-MIB. Индекс PoE «группа.порт» сопоставляется с интерфейсом вручную; совпадение с ifIndex не предполагается.</p>
+  {% if switch.capabilities.get('poe_ports') == 'error' or switch.capabilities.get('poe_supplies') == 'error' %}<p class="sw-message warn">Последняя проверка PoE завершилась ошибкой. Сохранённые показания могут быть устаревшими.</p>{% endif %}
+  {% if switch.poe_supplies %}
+  <div class="sw-table-wrap"><table class="grid" style="min-width:560px"><thead><tr><th>Блок / группа</th><th>Состояние</th><th>Бюджет мощности</th><th>Потребление</th></tr></thead><tbody>
+    {% for index, supply in switch.poe_supplies.items() %}<tr><td>{{ index }}</td><td>{{ {1:'Работает', 2:'Выключен', 3:'Неисправность'}.get(supply.get('oper_status'), 'Нет данных') }}</td><td>{{ (supply.get('nominal_watts')|string ~ ' Вт') if supply.get('nominal_watts') is not none else '—' }}</td><td>{{ (supply.get('consumption_watts')|string ~ ' Вт') if supply.get('consumption_watts') is not none else '—' }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="sw-message muted">Общий бюджет и потребление PoE: {{ 'не поддерживаются или недоступны с текущими правами SNMP' if switch.capabilities.get('poe_supplies') == 'unsupported' else 'данных пока нет' }}.</p>{% endif %}
+  {% if switch.poe_ports %}
+  <div class="sw-table-wrap" style="margin-top:14px"><table class="grid" style="min-width:700px"><thead><tr><th>Индекс PoE</th><th>Разрешение питания</th><th>Состояние</th><th>Отказы питания</th><th>Перегрузки</th><th>Короткие замыкания</th></tr></thead><tbody>
+    {% for index, poe in switch.poe_ports.items() %}<tr><td>{{ index }}</td><td>{{ {1:'Включено', 2:'Выключено'}.get(poe.get('admin_enable'), 'Нет данных') }}</td><td><span class="badge {{ ('ok' if poe.get('detection_status') == 3 else ('err' if poe.get('detection_status') in [4, 6] else ('warn' if poe.get('detection_status') == 5 else 'muted'))) if poe_snapshot_fresh else 'muted' }}">{% if not poe_snapshot_fresh %}Последние данные: {% endif %}{{ poe_labels.get(poe.get('detection_status'), 'Нет данных') }}</span></td><td>{{ poe.get('power_denied') if poe.get('power_denied') is not none else '—' }}</td><td>{{ poe.get('overload') if poe.get('overload') is not none else '—' }}</td><td>{{ poe.get('short') if poe.get('short') is not none else '—' }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="sw-caption">Счётчики PoE накопительные: ненулевое значение может относиться к прошлой неисправности. Мощность каждого порта эта стандартная таблица не сообщает.</p>
+  {% else %}<p class="sw-message muted">Состояние PoE по портам: {{ 'не поддерживается или недоступно с текущими правами SNMP' if switch.capabilities.get('poe_ports') == 'unsupported' else 'данных пока нет' }}.</p>{% endif %}
+</section>
+</div>
+
+<div id="sw-edit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sw-edit-title"><div class="modal-card">
+  <h3 id="sw-edit-title">Настройки коммутатора</h3>
+  <form id="sw-edit-form" class="sw-form">
+    <label>Название<input name="name" value="{{ switch.name }}" required maxlength="128"></label>
+    <label>Объект<select name="group_id"><option value="">Без объекта</option>{% for group in groups %}<option value="{{ group.id }}" {{ 'selected' if group.id == switch.group_id else '' }}>{{ group.name }}</option>{% endfor %}</select></label>
+    <label>Модель<select name="model"><option value="DH-CS4226-24ET-240">Dahua DH-CS4226-24ET-240</option></select></label>
+    <div class="row"><label>IP / имя хоста<input name="host" value="{{ switch.host }}" required maxlength="253"></label><label>Порт UDP<input name="snmp_port" type="number" min="1" max="65535" value="{{ switch.snmp_port }}" required></label></div>
+    <label>Новый SNMP community<input name="community" type="password" autocomplete="new-password" maxlength="255" placeholder="Пусто — сохранить текущий"></label>
+    <p class="muted">SNMPv2c, доступ только на чтение. Сохранённый community не отображается.</p>
+    <div class="row"><label>Таймаут, с<input name="timeout" type="number" min="0.5" max="5" step="0.5" value="{{ switch.timeout }}" required></label><label>Повторных попыток<input name="retries" type="number" min="0" max="2" value="{{ switch.retries }}" required></label></div>
+    <label><input name="enabled" type="checkbox" {{ 'checked' if switch.enabled else '' }}>Регулярно опрашивать</label>
+    <p class="err-text sw-error" role="alert"></p>
+    <div class="actions"><button type="submit">Сохранить</button><button type="button" class="secondary" data-close="sw-edit-modal">Отмена</button></div>
+  </form>
+</div></div>
+
+<div id="sw-port-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sw-port-title"><div class="modal-card">
+  <h3 id="sw-port-title">Настройка порта</h3>
+  <form id="sw-port-form" class="sw-form">
+    <input type="hidden" name="port_id">
+    <label><input name="expected_up" type="checkbox">Контролировать наличие связи</label>
+    <p class="muted">Включите для камер и uplink. Свободные порты оставьте без контроля.</p>
+    <label>Камера<select name="channel_ref_id"><option value="">Не назначена</option>{% for channel in channels %}<option value="{{ channel.id }}">{{ channel.device_name }} · {{ channel.channel_index }}{% if channel.name %} · {{ channel.name }}{% endif %}</option>{% endfor %}</select></label>
+    <label>Индекс PoE<select name="poe_index"><option value="">Не сопоставлен / без PoE</option>{% for index in switch.poe_ports %}<option value="{{ index }}">{{ index }}</option>{% endfor %}</select></label>
+    <p class="muted">Сопоставьте индекс PoE с физическим портом по данным устройства. При назначении камеры контроль связи включается автоматически. Для его отключения снимите назначение камеры.</p>
+    <p class="err-text sw-error" role="alert"></p>
+    <div class="actions"><button type="submit">Сохранить</button><button type="button" class="secondary" data-close="sw-port-modal">Отмена</button></div>
+  </form>
+</div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const switchId = {{ switch.id }};
+  const errorBox = document.getElementById('sw-action-error');
+  const editForm = document.getElementById('sw-edit-form');
+  const portForm = document.getElementById('sw-port-form');
+  let busy = false;
+  let returnFocus = null;
+  function openModal(id, opener) {
+    returnFocus = opener;
+    const modal = document.getElementById(id);
+    modal.querySelector('.sw-error').textContent = '';
+    modal.classList.remove('hidden');
+    modal.querySelector('input:not([type=hidden]),select').focus();
+  }
+  function closeModal(id) { if (!busy) { document.getElementById(id).classList.add('hidden'); if (returnFocus) returnFocus.focus(); } }
+  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => closeModal(button.dataset.close)));
+  document.querySelectorAll('#sw-edit-modal,#sw-port-modal').forEach(modal => modal.addEventListener('click', event => { if (event.target === modal) closeModal(modal.id); }));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') document.querySelectorAll('#sw-edit-modal,#sw-port-modal').forEach(modal => { if (!modal.classList.contains('hidden')) closeModal(modal.id); }); });
+  document.getElementById('sw-edit-open').addEventListener('click', event => openModal('sw-edit-modal', event.currentTarget));
+  document.querySelectorAll('.sw-port-edit').forEach(button => button.addEventListener('click', () => {
+    const data = button.dataset;
+    portForm.elements.port_id.value = data.portId;
+    portForm.dataset.channelId = data.channelId;
+    portForm.dataset.poeIndex = data.poeIndex;
+    portForm.elements.expected_up.checked = data.expectedUp === '1';
+    portForm.elements.channel_ref_id.value = data.channelId;
+    updateExpected();
+    portForm.elements.poe_index.querySelectorAll('[data-missing]').forEach(option => option.remove());
+    if (data.poeIndex && !Array.from(portForm.elements.poe_index.options).some(option => option.value === data.poeIndex)) {
+      const option = new Option(`${data.poeIndex} (нет свежих данных)`, data.poeIndex);
+      option.dataset.missing = '1';
+      portForm.elements.poe_index.add(option);
+    }
+    portForm.elements.poe_index.value = data.poeIndex;
+    document.getElementById('sw-port-title').textContent = `Порт ${data.portName}`;
+    openModal('sw-port-modal', button);
+  }));
+  function updateExpected() {
+    const mapped = Boolean(portForm.elements.channel_ref_id.value);
+    if (mapped) portForm.elements.expected_up.checked = true;
+    portForm.elements.expected_up.disabled = mapped;
+  }
+  portForm.elements.channel_ref_id.addEventListener('change', updateExpected);
+  async function mutate(path, method, payload, button, out, done) {
+    if (busy) return;
+    busy = true; out.textContent = '';
+    const oldText = button.textContent;
+    button.textContent = method === 'POST' ? 'Опрашиваем…' : 'Сохраняем…';
+    document.querySelectorAll('.sw-scope button,.sw-form button').forEach(item => { item.disabled = true; });
+    try {
+      const options = {method};
+      if (payload !== undefined) { options.headers = {'Content-Type': 'application/json'}; options.body = JSON.stringify(payload); }
+      const response = await fetch(path, options);
+      const result = response.status === 204 ? {} : await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = Array.isArray(result.detail) ? result.detail.map(item => item.msg).join('; ') : result.detail;
+        throw new Error(typeof detail === 'string' ? detail : `Операция не выполнена (${response.status})`);
+      }
+      done(result);
+    } catch (error) { out.textContent = error.message || 'Не удалось связаться с сервером.'; }
+    finally { busy = false; button.textContent = oldText; document.querySelectorAll('.sw-scope button,.sw-form button').forEach(item => { item.disabled = false; }); }
+  }
+  document.getElementById('sw-poll').addEventListener('click', event => mutate(`/api/switches/${switchId}/poll`, 'POST', undefined, event.currentTarget, errorBox, () => location.reload()));
+  document.getElementById('sw-delete').addEventListener('click', event => {
+    if (busy || !confirm('Удалить коммутатор из мониторинга вместе с привязками портов? Камеры и NVR останутся.')) return;
+    mutate(`/api/switches/${switchId}`, 'DELETE', undefined, event.currentTarget, errorBox, () => { location.href = '/switches'; });
+  });
+  editForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const values = new FormData(editForm);
+    const payload = {
+      name: values.get('name').trim(), host: values.get('host').trim(), model: values.get('model').trim(),
+      group_id: values.get('group_id') ? Number(values.get('group_id')) : null,
+      snmp_port: Number(values.get('snmp_port')), snmp_version: '2c',
+      timeout: Number(values.get('timeout')), retries: Number(values.get('retries')), enabled: values.has('enabled'),
+    };
+    if (values.get('community')) payload.community = values.get('community');
+    mutate(`/api/switches/${switchId}`, 'PUT', payload, editForm.querySelector('[type=submit]'), editForm.querySelector('.sw-error'), () => { editForm.elements.community.value = ''; location.reload(); });
+  });
+  portForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const values = new FormData(portForm);
+    const payload = {expected_up: portForm.elements.expected_up.checked};
+    if (values.get('channel_ref_id') !== portForm.dataset.channelId) payload.channel_ref_id = values.get('channel_ref_id') ? Number(values.get('channel_ref_id')) : null;
+    if (values.get('poe_index') !== portForm.dataset.poeIndex) payload.poe_index = values.get('poe_index') || null;
+    mutate(`/api/switches/${switchId}/ports/${Number(values.get('port_id'))}`, 'PATCH', payload, portForm.querySelector('[type=submit]'), portForm.querySelector('.sw-error'), () => location.reload());
+  });
+})();
+</script>
+{% endblock %}

@@ -2,8 +2,9 @@
 
 Бэкапим конфигурацию и РУЧНЫЕ данные (их не восстановить опросом):
 устройства, группы, автобусы, диски, журналы, заметки, метки плана, учётки,
-настройки. Мониторинговые данные (каналы/HDD/события) регенерируются опросом —
-их не включаем.
+настройки. Каналы включены для сохранения режима записи и привязок портов.
+Коммутаторы и назначенные порты сохраняются с зашифрованными секретами.
+HDD и события регенерируются опросом — их не включаем.
 """
 from __future__ import annotations
 
@@ -17,13 +18,15 @@ from sqlalchemy import Date, DateTime, delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
-    AppSetting, Bus, Device, Disk, DiskReview, Group, Note, PlanMarker, SwapLog, User, utcnow,
+    AppSetting, Bus, Channel, Device, Disk, DiskReview, Group, NetworkSwitch,
+    Note, PlanMarker, SwitchPort, SwapLog, User, utcnow,
 )
 
 log = logging.getLogger(__name__)
 
 # Порядок ВСТАВКИ (родители раньше). Удаление — в обратном порядке.
-_MODELS = [Group, Device, Bus, Disk, SwapLog, DiskReview, Note, PlanMarker, User, AppSetting]
+_MODELS = [Group, Device, Channel, NetworkSwitch, SwitchPort,
+           Bus, Disk, SwapLog, DiskReview, Note, PlanMarker, User, AppSetting]
 BACKUP_DIR = "data/backups"
 _KEEP = 30
 

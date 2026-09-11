@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import SessionLocal
 from app.drivers import build_client
-from app.drivers.base import NVRAuthError, NVRConnectionError, NVRError
+from app.drivers.base import FeatureUnavailable, NVRAuthError, NVRConnectionError, NVRError
 from app.models import (
     Channel,
     ChannelState,
@@ -31,6 +31,17 @@ _semaphore = asyncio.Semaphore(settings.max_concurrent_polls)
 
 # Время последнего завершённого полного опроса (для watchdog — детект «опрос завис»)
 last_poll_at: dt.datetime | None = None
+
+
+def _mark_check(device: Device, name: str, status: str, detail: str | None = None) -> None:
+    """Храним результат попытки отдельно от последних измеренных значений.
+
+    JSON заменяется целиком: SQLAlchemy не замечает вложенные изменения dict.
+    Эти отметки используются только панелью и не запускают уведомления.
+    """
+    checks = dict(device.monitoring_checks or {})
+    checks[name] = {"status": status, "checked_at": utcnow().isoformat(), "detail": detail}
+    device.monitoring_checks = checks
 
 
 async def poll_all() -> None:
@@ -67,6 +78,8 @@ async def poll_device(device_id: int) -> None:
 
 
 async def _poll_one(session: AsyncSession, device: Device) -> None:
+    for name in ("channels", "hdd", "time", "health"):
+        _mark_check(device, name, "error", "Опрос не завершён")
     client = build_client(device, semaphore=_semaphore)
     caps = device.capabilities or {}
 
@@ -108,33 +121,60 @@ async def _poll_one(session: AsyncSession, device: Device) -> None:
         try:
             statuses = await client.get_channel_statuses()
             await _update_channels(session, device, statuses)
+            _mark_check(device, "channels", "ok")
         except NVRConnectionError as exc:
+            _mark_check(device, "channels", "error", str(exc))
             await _handle_unreachable(session, device, str(exc))
             return
+        except FeatureUnavailable as exc:
+            _mark_check(device, "channels", "unavailable", str(exc))
         except NVRError as exc:
+            _mark_check(device, "channels", "error", str(exc))
             log.warning("Каналы %s недоступны: %s", device.id, exc)
+        except (ValueError, TypeError) as exc:
+            _mark_check(device, "channels", "error", "Некорректный ответ каналов")
+            log.warning("Каналы %s: некорректный ответ: %s", device.id, exc)
+    else:
+        _mark_check(device, "channels", "unavailable", "API каналов недоступен")
 
     # ── HDD ───────────────────────────────────────────────────────────────────
     if caps.get("hdd", True):
         try:
             hdds = await client.get_hdd_info()
             await _update_hdds(session, device, hdds)
+            _mark_check(device, "hdd", "ok")
+        except FeatureUnavailable as exc:
+            _mark_check(device, "hdd", "unavailable", str(exc))
         except NVRError as exc:
+            _mark_check(device, "hdd", "error", str(exc))
             log.debug("HDD %s: %s", device.id, exc)
+    else:
+        _mark_check(device, "hdd", "unavailable", "API хранилища недоступен")
 
     # ── Время устройства ───────────────────────────────────────────────────────
     if caps.get("time", True):
         try:
             device_time = await client.get_device_time()
             await _check_time_drift(session, device, device_time)
+            _mark_check(device, "time", "ok")
+        except FeatureUnavailable as exc:
+            _mark_check(device, "time", "unavailable", str(exc))
         except NVRError as exc:
+            _mark_check(device, "time", "error", str(exc))
             log.debug("Время %s: %s", device.id, exc)
+    else:
+        _mark_check(device, "time", "unavailable", "API времени недоступен")
 
     # ── Здоровье железа (температура/нагрузка) ─────────────────────────────────
     try:
         health = await client.get_health()
         await _check_health(session, device, health)
+        available = any(value is not None for value in (health.cpu_percent, health.memory_percent, health.temperature_c))
+        _mark_check(device, "health", "ok" if available else "unavailable")
+    except FeatureUnavailable as exc:
+        _mark_check(device, "health", "unavailable", str(exc))
     except NVRError as exc:
+        _mark_check(device, "health", "error", str(exc))
         log.debug("Health %s: %s", device.id, exc)
 
 
@@ -295,6 +335,9 @@ async def _update_channels(session: AsyncSession, device: Device, statuses) -> N
 # ── HDD ──────────────────────────────────────────────────────────────────────
 async def _update_hdds(session: AsyncSession, device: Device, hdds) -> None:
     existing = {h.hdd_id: h for h in device.hdds}
+    # Драйвер возвращает только полный валидный инвентарь; при ошибке он бросает
+    # исключение, поэтому пропажу нельзя спутать с неподдерживаемым API/таймаутом.
+    seen_ids = {info.hdd_id for info in hdds}
     for info in hdds:
         h = existing.get(info.hdd_id)
         if h is None:
@@ -305,6 +348,8 @@ async def _update_hdds(session: AsyncSession, device: Device, hdds) -> None:
         h.capacity_mb = info.capacity_mb
         h.free_mb = info.free_mb
         h.status = info.status
+        h.raw_status = info.raw_status
+        h.present = True
 
         fault_scope = f"device:{device.id}:hdd:{info.hdd_id}:fault"
         if info.status in (HddState.ERROR, HddState.NO_DISK):
@@ -314,7 +359,7 @@ async def _update_hdds(session: AsyncSession, device: Device, hdds) -> None:
                 severity=Severity.CRITICAL, device_id=device.id,
                 message=f"«{device.name}» HDD {info.hdd_id}: {label}",
             )
-        else:
+        elif info.status == HddState.OK:
             await alerts.resolve_alert(
                 session, scope_key=fault_scope, device_id=device.id,
                 message=f"«{device.name}» HDD {info.hdd_id}: норма",
@@ -337,6 +382,11 @@ async def _update_hdds(session: AsyncSession, device: Device, hdds) -> None:
                     message=f"«{device.name}» HDD {info.hdd_id}: заполнение в норме ({usage}%)",
                     notify=False,
                 )
+
+    for hid in existing.keys() - seen_ids:
+        h = existing[hid]
+        h.present = False
+        h.status = HddState.MISSING
 
 
 # ── Время ──────────────────────────────────────────────────────────────────────

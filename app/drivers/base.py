@@ -70,7 +70,8 @@ class HddInfo:
     name: str | None = None
     capacity_mb: int = 0
     free_mb: int = 0
-    status: str = "unknown"  # ok | error | no_disk | unknown
+    status: str = "unknown"  # ok | error | no_disk | unknown | unformatted | read_only
+    raw_status: str | None = None
 
 
 @dataclass

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,6 +67,16 @@ class ChannelOut(BaseModel):
     quality_checked_at: dt.datetime | None = None
     last_status_change: dt.datetime | None = None
     last_seen: dt.datetime | None = None
+    recording_mode: str = "continuous"
+    recording_status: str = "unknown"
+    recording_checked_at: dt.datetime | None = None
+    recording_last_end: dt.datetime | None = None
+    recording_age_seconds: int | None = None
+    recording_error: str | None = None
+
+
+class RecordingModeUpdate(BaseModel):
+    recording_mode: Literal["continuous", "event", "disabled"]
 
 
 class HddOut(BaseModel):
@@ -75,6 +86,9 @@ class HddOut(BaseModel):
     capacity_mb: int
     free_mb: int
     status: str
+    raw_status: str | None = None
+    present: bool = True
+    updated_at: dt.datetime | None = None
 
 
 class DeviceOut(BaseModel):
@@ -93,6 +107,10 @@ class DeviceOut(BaseModel):
     reachable: bool
     consecutive_failures: int
     capabilities: dict = Field(default_factory=dict)
+    monitoring_checks: dict = Field(default_factory=dict)
+    temperature: float | None = None
+    cpu_load: float | None = None
+    memory_usage: float | None = None
     last_seen: dt.datetime | None = None
     last_error: str | None = None
     time_drift_seconds: int | None = None

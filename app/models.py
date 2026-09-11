@@ -6,6 +6,7 @@ import datetime as dt
 from sqlalchemy import (
     JSON,
     Boolean,
+    BigInteger,
     Date,
     DateTime,
     Float,
@@ -45,6 +46,9 @@ class HddState:
     ERROR = "error"
     NO_DISK = "no_disk"
     UNKNOWN = "unknown"
+    UNFORMATTED = "unformatted"
+    READ_ONLY = "read_only"
+    MISSING = "missing"
 
 
 class ArchiveState:
@@ -105,6 +109,7 @@ class Device(Base):
 
     # Возможности (результат capability-check): {"channels": true, "hdd": ..., "archive": ..., "time": ...}
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    monitoring_checks: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Рантайм-состояние
     reachable: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -155,6 +160,14 @@ class Channel(Base):
     # Реальная глубина архива по каналу (дней), измеряется суточной задачей.
     archive_depth_days: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # Свежесть архива: конец записи — местное время NVR, проверка — UTC.
+    recording_mode: Mapped[str] = mapped_column(String(16), default="continuous")
+    recording_status: Mapped[str] = mapped_column(String(16), default="unknown")
+    recording_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    recording_last_end: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=False), default=None)
+    recording_age_seconds: Mapped[int | None] = mapped_column(Integer, default=None)
+    recording_error: Mapped[str | None] = mapped_column(Text, default=None)
+
     # Контроль качества картинки (компьютерное зрение по снапшоту)
     quality: Mapped[str | None] = mapped_column(String(16), default=None)  # ok|dark|uniform|blurry|frozen|error
     quality_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -184,6 +197,8 @@ class Hdd(Base):
     capacity_mb: Mapped[int] = mapped_column(Integer, default=0)
     free_mb: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default=HddState.UNKNOWN)
+    raw_status: Mapped[str | None] = mapped_column(String(128), default=None)
+    present: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -197,6 +212,72 @@ class Hdd(Base):
     @property
     def usage_percent(self) -> float:
         return round(self.used_mb / self.capacity_mb * 100, 1) if self.capacity_mb else 0.0
+
+
+class NetworkSwitch(Base):
+    """Коммутатор камер: SNMP только для чтения, community хранится зашифрованным."""
+
+    __tablename__ = "network_switches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    host: Mapped[str] = mapped_column(String(255))
+    model: Mapped[str] = mapped_column(String(128), default="DH-CS4226-24ET-240")
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), default=None)
+    snmp_port: Mapped[int] = mapped_column(Integer, default=161)
+    snmp_version: Mapped[str] = mapped_column(String(8), default="2c")
+    community_enc: Mapped[str] = mapped_column(Text, default="")
+    timeout: Mapped[float] = mapped_column(Float, default=2.0)
+    retries: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    reachable: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_attempt_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    last_seen: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    sys_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    sys_descr: Mapped[str | None] = mapped_column(Text, default=None)
+    sys_object_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    uptime_ticks: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    poe_ports: Mapped[dict] = mapped_column(JSON, default=dict)
+    poe_supplies: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    ports: Mapped[list["SwitchPort"]] = relationship(back_populates="switch", cascade="all, delete-orphan")
+
+
+class SwitchPort(Base):
+    """Индекс интерфейса и необязательная ручная привязка камеры/PoE."""
+
+    __tablename__ = "switch_ports"
+    __table_args__ = (
+        UniqueConstraint("switch_id", "if_index", name="uq_switch_interface"),
+        UniqueConstraint("channel_ref_id", name="uq_switch_camera"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    switch_id: Mapped[int] = mapped_column(ForeignKey("network_switches.id", ondelete="CASCADE"))
+    if_index: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str | None] = mapped_column(String(255), default=None)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    alias: Mapped[str | None] = mapped_column(String(255), default=None)
+    admin_status: Mapped[int | None] = mapped_column(Integer, default=None)
+    oper_status: Mapped[int | None] = mapped_column(Integer, default=None)
+    speed_mbps: Mapped[float | None] = mapped_column(Float, default=None)
+    last_change_ticks: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    observed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    present: Mapped[bool] = mapped_column(Boolean, default=True)
+    counters: Mapped[dict] = mapped_column(JSON, default=dict)
+    in_bps: Mapped[float | None] = mapped_column(Float, default=None)
+    out_bps: Mapped[float | None] = mapped_column(Float, default=None)
+    in_error_delta: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    out_error_delta: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    in_discard_delta: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    out_discard_delta: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    expected_up: Mapped[bool] = mapped_column(Boolean, default=False)
+    channel_ref_id: Mapped[int | None] = mapped_column(ForeignKey("channels.id", ondelete="SET NULL"), default=None)
+    poe_index: Mapped[str | None] = mapped_column(String(64), default=None)
+    switch: Mapped["NetworkSwitch"] = relationship(back_populates="ports")
 
 
 class ArchiveCoverage(Base):

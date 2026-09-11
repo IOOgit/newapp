@@ -1,13 +1,13 @@
 """CRUD-операции с БД."""
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import schemas
 from app.crypto import encrypt
-from app.models import Device, Event, Group
+from app.models import Channel, Device, Event, Group, SwitchPort
 
 
 # ── Группы ────────────────────────────────────────────────────────────────────
@@ -84,6 +84,10 @@ async def update_device(
 
 
 async def delete_device(session: AsyncSession, device: Device) -> None:
+    # SQLite может работать без FK enforcement: снимаем ссылку и при ORM-каскаде.
+    await session.execute(update(SwitchPort).where(
+        SwitchPort.channel_ref_id.in_(select(Channel.id).where(Channel.device_id == device.id))
+    ).values(channel_ref_id=None))
     await session.delete(device)
     await session.commit()
 
