@@ -132,6 +132,35 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_lightweight_migrate)
     await ensure_owner_and_migrate_roles()
+    await _backfill_bus_problem_log()
+
+
+async def _backfill_bus_problem_log() -> None:
+    """Разовый бэкфилл истории проблем автобусов (идемпотентно).
+
+    Проблемы, отмеченные до появления `bus_problem_log`, в журнал не попали —
+    на странице автобуса выходило «проблем не отмечали» при висящей пометке.
+    Для каждого автобуса с has_problem без открытой записи создаём её;
+    за время пометки берём updated_at автобуса (точнее данных нет).
+    """
+    from sqlalchemy import select
+
+    from app.models import Bus, BusProblemLog
+
+    async with SessionLocal() as session:
+        buses = list((await session.execute(select(Bus).where(Bus.has_problem))).scalars())
+        if not buses:
+            return
+        open_ids = set((await session.execute(
+            select(BusProblemLog.bus_id).where(BusProblemLog.closed_at.is_(None))
+        )).scalars())
+        for b in buses:
+            if b.id not in open_ids:
+                session.add(BusProblemLog(
+                    bus_id=b.id, note=b.problem_note,
+                    opened_at=b.updated_at or b.created_at,
+                ))
+        await session.commit()
 
 
 async def ensure_owner_and_migrate_roles() -> None:

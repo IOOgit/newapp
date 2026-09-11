@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}QR-наклейки на диски{% endblock %}
+{% block content %}
+<div class="bus-scope">
+  <div class="noprint">
+    <a href="/disks" style="font-size:13px;font-weight:600;color:var(--color-accent-700)">← к реестру</a>
+    <div class="page-head" style="margin-top:14px">
+      <div>
+        <div class="kicker" style="margin-bottom:8px">Автобусы · ручной учёт</div>
+        <h1>QR-наклейки на диски</h1>
+      </div>
+      <div class="device-actions">
+        <button class="bus-btn primary" onclick="window.print()">Печать</button>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <p class="muted" style="margin-top:10px">Наклей на каждый диск. QR ведёт на паспорт диска;
+      на странице «Ревизия» такие метки сканируются камерой — что не отсканировано, то потерялось.</p>
+  </div>
+  <div class="labels">
+    {% for d in disks %}
+      <div class="label">
+        <img src="/disks/{{ d.id }}/qr.png" alt="QR">
+        <div class="label-name">{{ d.label }}</div>
+        <div class="label-host muted">{{ d.type }}{% if d.capacity_gb %} · {{ d.capacity_gb }} ГБ{% endif %}</div>
+      </div>
+    {% else %}
+      <p class="muted">Дисков нет.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

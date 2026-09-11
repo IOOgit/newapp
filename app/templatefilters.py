@@ -31,10 +31,29 @@ def localtime(value, fmt: str = "%d.%m %H:%M") -> str:
     return value.strftime(fmt)
 
 
+def days_since(value) -> int | None:
+    """Сколько полных дней прошло с момента value (UTC). None → None.
+
+    Нужен индикатору «срок диска» на карточках автобусов: возраст установки
+    считается на отрисовке, бэкенд не трогаем.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = dt.datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.timezone.utc)
+    return max((dt.datetime.now(dt.timezone.utc) - value).days, 0)
+
+
 def register(templates) -> None:
     """Подключить фильтры и глобальные переменные к окружению Jinja."""
     from app import __version__
 
     templates.env.filters["localtime"] = localtime
+    templates.env.filters["days_since"] = days_since
     # Версия приложения доступна во всех шаблонах как {{ app_version }}.
     templates.env.globals["app_version"] = __version__

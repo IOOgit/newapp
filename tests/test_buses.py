@@ -200,11 +200,10 @@ async def test_settings_and_grouping(db):
         await c.post("/api/buses", json={"bus_number": "А1", "route": "5"})
         await c.post("/api/buses", json={"bus_number": "А2", "route": "5"})
         await c.post("/api/buses", json={"bus_number": "Б1", "route": "10"})
-        # пороги сохраняются и применяются
+        # пороги сохраняются через API (форма убрана из UI вместе с ротацией)
         r = await c.post("/api/buses/settings", json={"swap_days": 21, "review_days": 3})
         assert r.status_code == 200
-        page = (await c.get("/buses")).text
-        assert 'value="21"' in page and 'value="3"' in page  # подставились в форму
+        assert (await c.get("/buses")).status_code == 200
         # группировка по маршрутам
         grouped = (await c.get("/buses?sort=group")).text
         assert "Маршрут 5" in grouped and "Маршрут 10" in grouped
@@ -251,7 +250,7 @@ async def test_route_sort_order(db):
         r = await c.get("/buses?sort=route")
         body = r.text
         # маршрут 5 должен идти раньше маршрута 10 (натуральная сортировка)
-        assert body.index("марш. 5") < body.index("марш. 10")
+        assert body.index("Маршрут 5") < body.index("Маршрут 10")
 
 
 async def test_delete_disk(db):
@@ -443,3 +442,146 @@ async def test_disk_bus_suggestion(db):
         # метка без совпадения — подсказки нет
         await c.post("/api/disks", json={"label": "ZZZ-1", "status": "ready"})
         assert "↳ ZZZ" not in (await c.get("/disks")).text
+
+
+async def test_bus_problems_report_and_csv(db):
+    """Отмеченные проблемы попадают в печатную сводку и CSV-выгрузку."""
+    async with _client() as c:
+        b1 = (await c.post("/api/buses", json={"bus_number": "П-1", "route": "5"})).json()["id"]
+        b2 = (await c.post("/api/buses", json={"bus_number": "П-2", "route": "5"})).json()["id"]
+        r = await c.put(f"/api/buses/{b1}", json={"has_problem": True, "problem_note": "не пишет звук"})
+        assert r.status_code == 200
+
+        page = await c.get("/buses/problems")
+        assert page.status_code == 200
+        assert "П-1" in page.text and "не пишет звук" in page.text
+        assert "П-2" not in page.text  # без проблемы — не в списке
+
+        csv_r = await c.get("/api/buses/problems.csv")
+        assert csv_r.status_code == 200
+        assert "П-1" in csv_r.text and "не пишет звук" in csv_r.text
+        assert "attachment" in csv_r.headers["content-disposition"]
+
+        # проблему сняли — сводка пустеет
+        await c.put(f"/api/buses/{b1}", json={"has_problem": False, "problem_note": None})
+        page = await c.get("/buses/problems")
+        assert "Проблем нет" in page.text
+
+
+async def test_bus_problem_history(db):
+    """Пометки проблем копятся в истории: открытие, смена формулировки, снятие."""
+    from app.models import BusProblemLog
+
+    async with _client() as c:
+        bus = (await c.post("/api/buses", json={"bus_number": "И-1", "route": "9"})).json()["id"]
+        # отметили проблему → открылась запись
+        await c.put(f"/api/buses/{bus}", json={"has_problem": True, "problem_note": "шумит вентилятор"})
+        # сменили формулировку → старая закрылась, открылась новая
+        await c.put(f"/api/buses/{bus}", json={"has_problem": True, "problem_note": "не пишет канал 3"})
+        # сняли проблему → запись закрылась
+        await c.put(f"/api/buses/{bus}", json={"has_problem": False, "problem_note": None})
+
+    async with SessionLocal() as s:
+        log = (await s.execute(select(BusProblemLog).where(BusProblemLog.bus_id == bus)
+                               .order_by(BusProblemLog.id))).scalars().all()
+        assert len(log) == 2
+        assert log[0].note == "шумит вентилятор" and log[0].closed_at is not None
+        assert log[1].note == "не пишет канал 3" and log[1].closed_at is not None
+
+    async with _client() as c:
+        # история видна на странице автобуса
+        page = await c.get(f"/buses/{bus}")
+        assert "История проблем" in page.text
+        assert "шумит вентилятор" in page.text and "не пишет канал 3" in page.text
+
+        # повторная пометка: в сводке счётчик «Раз» учитывает всю историю
+        await c.put(f"/api/buses/{bus}", json={"has_problem": True, "problem_note": "опять канал 3"})
+        csv_r = await c.get("/api/buses/problems.csv")
+        row = next(line for line in csv_r.text.splitlines() if "И-1" in line)
+        assert row.rstrip().endswith(";3")
+
+
+async def test_bus_problem_backfill(db):
+    """Проблемы, отмеченные до появления истории, подхватываются бэкфиллом при старте."""
+    from app.database import _backfill_bus_problem_log
+    from app.models import BusProblemLog
+
+    async with _client() as c:
+        bus = (await c.post("/api/buses", json={"bus_number": "Б-1"})).json()["id"]
+    # имитируем «старую» пометку — напрямую в БД, мимо API (история не писалась)
+    async with SessionLocal() as s:
+        b = (await s.execute(select(Bus).where(Bus.id == bus))).scalar_one()
+        b.has_problem = True
+        b.problem_note = "записи не полные"
+        await s.commit()
+
+    await _backfill_bus_problem_log()
+    await _backfill_bus_problem_log()  # повторный запуск дублей не плодит
+
+    async with SessionLocal() as s:
+        log = (await s.execute(select(BusProblemLog).where(BusProblemLog.bus_id == bus))).scalars().all()
+        assert len(log) == 1
+        assert log[0].note == "записи не полные" and log[0].closed_at is None
+
+    async with _client() as c:
+        page = await c.get(f"/buses/{bus}")
+        assert "записи не полные" in page.text and "История проблем" in page.text
+
+
+async def test_bus_chronic_block(db):
+    """Автобус с 2+ пометками попадает в блок «Чаще всего болеют»."""
+    async with _client() as c:
+        b1 = (await c.post("/api/buses", json={"bus_number": "Х-1", "route": "3"})).json()["id"]
+        b2 = (await c.post("/api/buses", json={"bus_number": "Х-2", "route": "3"})).json()["id"]
+        # Х-1: дважды отмечали и снимали; Х-2 — один раз
+        for note in ("не пишет", "снова не пишет"):
+            await c.put(f"/api/buses/{b1}", json={"has_problem": True, "problem_note": note})
+            await c.put(f"/api/buses/{b1}", json={"has_problem": False, "problem_note": None})
+        await c.put(f"/api/buses/{b2}", json={"has_problem": True, "problem_note": "разово"})
+
+        page = (await c.get("/buses/problems")).text
+        assert "Чаще всего болеют" in page and "Х-1" in page
+        # Х-2 с одной пометкой в хронику не попадает (но есть в основном списке)
+        chronic_part = page.split("Чаще всего болеют")[1]
+        assert "Х-2" not in chronic_part
+
+
+async def test_disk_qr_and_labels(db):
+    """QR-наклейки дисков: png-код и страница печати; ревизия содержит сканер."""
+    async with _client() as c:
+        d = (await c.post("/api/disks", json={"label": "QR-1", "type": "SSD"})).json()["id"]
+
+        qr = await c.get(f"/disks/{d}/qr.png")
+        assert qr.status_code == 200 and qr.headers["content-type"] == "image/png"
+        assert (await c.get("/disks/99999/qr.png")).status_code == 404
+
+        page = (await c.get("/disks/labels")).text
+        assert "QR-наклейки на диски" in page and "QR-1" in page
+
+        audit = (await c.get("/disks/audit")).text
+        assert "Сканировать" in audit and "Быстрый ввод" in audit
+
+
+async def test_buses_simplified_cards_and_analytics(db):
+    """Упрощённые карточки: закреплённые диски и проблема на карточке; аналитика."""
+    async with _client() as c:
+        bus = (await c.post("/api/buses", json={"bus_number": "УК-1", "route": "7"})).json()["id"]
+        await c.post("/api/disks", json={"label": "УК-1 (SSD)", "type": "SSD", "assigned_bus_id": bus})
+        await c.put(f"/api/buses/{bus}", json={"has_problem": True, "problem_note": "не пишет канал 2"})
+
+        page = (await c.get("/buses")).text
+        # диск-чип и текст проблемы прямо на карточке, кнопки отметки/снятия
+        assert "УК-1 (SSD)" in page and "не пишет канал 2" in page
+        assert "снять проблему" in page and "markProblem" in page
+
+        # страница автобуса: закрепление свободного диска на месте
+        free = (await c.post("/api/disks", json={"label": "СВ-1", "type": "SSD"})).json()["id"]
+        bpage = (await c.get(f"/buses/{bus}")).text
+        assert "Закрепить за автобусом" in bpage and "СВ-1" in bpage
+        r = await c.put(f"/api/disks/{free}", json={"assigned_bus_id": bus})
+        assert r.status_code == 200
+        assert "СВ-1" in (await c.get("/buses")).text  # чип появился на карточке
+
+        # аналитика: маршрут и месяц посчитаны
+        a = (await c.get("/buses/analytics")).text
+        assert "Аналитика проблем" in a and "марш. 7" in a and "По месяцам" in a

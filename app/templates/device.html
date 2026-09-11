@@ -1,24 +1,37 @@
 {% extends "base.html" %}
 {% block title %}{{ device.name }} — NVR Monitor{% endblock %}
 {% block content %}
-<a href="/" class="muted">← к дашборду</a>
-<div class="device-head">
-  <h1>{{ device.name }}</h1>
-  <div class="device-actions">
+<a href="/" style="font-size:13px;font-weight:600;color:var(--color-accent-700)">← Дашборд</a>
+<div class="device-head" style="margin-top:14px">
+  <div>
+    <div class="kicker" style="margin-bottom:8px">Объект · {{ device.host }}:{{ device.http_port }}</div>
+    <h1><span class="dot {{ health.color }}" title="{{ health.label }}" style="width:12px;height:12px"></span>{{ device.name }}</h1>
+  </div>
+  <div class="device-actions device-actions-primary">
     <button onclick="location.href='/devices/{{ device.id }}/wall'">🖼 Стена камер</button>
     <button onclick="location.href='/devices/{{ device.id }}/report'">📄 Отчёт</button>
     <button onclick="pollNow({{ device.id }})">Опросить сейчас</button>
-    <button onclick="recheck({{ device.id }})">Перепроверить возможности</button>
-    <button onclick="archiveCheck({{ device.id }})">Проверить архив (вчера)</button>
     <button onclick="recordingCheck({{ device.id }}, this)">Проверить свежую запись</button>
-    <button onclick="archiveDepth({{ device.id }})">Глубина архива</button>
-    <button onclick="qualityCheck({{ device.id }})">Проверить качество</button>
-    <button onclick="syncTime({{ device.id }})">Синхр. время</button>
-    <button onclick="diag({{ device.id }})">Диагностика</button>
-    <button class="danger" onclick="rebootDevice({{ device.id }})">Перезагрузить</button>
-    <button class="danger" onclick="deleteDevice({{ device.id }})">Удалить</button>
+    <details class="device-more-actions">
+      <summary>Ещё действия</summary>
+      <div class="device-more-menu">
+        <button onclick="recheck({{ device.id }})">Перепроверить возможности</button>
+        <button onclick="archiveCheck({{ device.id }})">Проверить архив за вчера</button>
+        <button onclick="archiveDepth({{ device.id }})">Глубина архива</button>
+        <button onclick="qualityCheck({{ device.id }})">Проверить качество</button>
+        <button onclick="syncTime({{ device.id }})">Синхронизировать время</button>
+        <button onclick="diag({{ device.id }})">Диагностика</button>
+        <button class="danger" onclick="rebootDevice({{ device.id }})">Перезагрузить</button>
+        <button class="danger" onclick="deleteDevice({{ device.id }})">Удалить</button>
+      </div>
+    </details>
   </div>
 </div>
+<div class="rule"></div>
+
+{% if device.last_error %}
+<div class="err-plate"><span>{{ device.last_error }}</span></div>
+{% endif %}
 
 <section id="monitoring-health" class="chart-card" style="margin:16px 0">
   <div class="chart-head">
@@ -27,25 +40,29 @@
   {% set check_names = {'connection':'Связь','channels':'Камеры','hdd':'Диски','time':'Время','health':'Железо','recording':'Свежая запись','archive':'Архив','quality':'Качество картинки'} %}
   {% set check_colors = {'ok':'ok','error':'err','critical':'err','missing':'err','warning':'warn','stale':'warn','time_error':'warn','unknown':'muted','unavailable':'muted','no_data':'muted','event':'muted','disabled':'muted'} %}
   {% set check_labels = {'ok':'норма','error':'ошибка проверки','critical':'проблема','missing':'запись не найдена','warning':'внимание','stale':'данные устарели','time_error':'проверьте часы','unknown':'не проверено','unavailable':'недоступно','no_data':'нет данных','event':'по событию','disabled':'выключено'} %}
-  <div class="info-grid" style="margin:12px 0">
+  <div class="health-checks">
     {% for kind, check in health.checks.items() %}
     <div>
       <b>{{ check_names.get(kind, kind) }}:</b>
       <span class="badge {{ check_colors.get(check.status, 'muted') }}" title="{{ check.detail or '' }}">{{ check_labels.get(check.status, check.status) }}</span>
-      <div class="muted" style="font-size:12px;margin-top:5px">Проверено: {% if check.checked_at %}<time data-monitoring-time="{{ check.checked_at }}">{{ check.checked_at }}</time>{% else %}ещё не проверено{% endif %}</div>
+      <time class="health-check-time" data-monitoring-time="{{ check.checked_at or '' }}" title="Проверено: {{ check.checked_at or 'ещё не проверено' }}">{{ check.checked_at or '—' }}</time>
     </div>
     {% endfor %}
   </div>
   {% if health.issues %}
-  <ul style="padding-left:20px;margin-bottom:0">
-    {% for issue in health.issues %}
-    <li style="margin:8px 0">
-      <strong>{{ issue.title }}</strong>{% if issue.detail %}<div class="muted" style="font-size:13px">{{ issue.detail }}</div>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
+  <details class="health-issues">
+    <summary>Проблемы: {{ health.issues|length }} — показать список</summary>
+    <div class="health-issues-scroll">
+      {% for issue in health.issues %}
+      <div class="health-issue"><strong>{{ issue.title }}</strong>{% if issue.detail %}<span class="muted">{{ issue.detail }}</span>{% endif %}</div>
+      {% endfor %}
+    </div>
+  </details>
   {% endif %}
 </section>
+<nav class="device-jump" aria-label="Разделы регистратора">
+  <a href="#channels">Каналы</a><a href="#storage">HDD</a><a href="#archive-calendar">Архив</a><a href="#device-events">События</a><a href="#maintenance">Обслуживание</a>
+</nav>
 <p id="recording-action-result" class="muted" role="status" aria-live="polite" hidden></p>
 
 <section class="info-grid">
@@ -68,10 +85,10 @@
       <span class="badge {{ 'ok' if v else 'err' }}">{{ k }}{{ '✓' if v else '✗' }}</span>
     {% endfor %}
   </div>
-  {% if device.last_error %}<div class="err-text"><b>Ошибка:</b> {{ device.last_error }}</div>{% endif %}
 </section>
 
-<h2>Каналы</h2>
+<span id="channels" class="section-anchor"></span><h2>Каналы</h2>
+<div class="table-wrap">
 <p class="muted" style="font-size:13px">Свежая запись — последний найденный фрагмент архива. Укажите ожидаемый режим для каждого канала: непрерывно, по событию или без контроля записи. Эта настройка меняет только мониторинг.</p>
 <table class="grid">
   <thead><tr><th>#</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Свежая запись</th><th>Ожидаемый режим</th><th>Картинка</th><th>Глубина</th><th>Изменён</th><th>Кадр</th><th>Монитор</th></tr></thead>
@@ -119,8 +136,9 @@
   {% else %}<tr><td colspan="11" class="muted">Каналов нет (опросите устройство).</td></tr>{% endfor %}
   </tbody>
 </table>
+</div>
 
-<h2>Диски (HDD)</h2>
+<span id="storage" class="section-anchor"></span><h2>Диски (HDD)</h2>
 {% set hdd_check = health.checks.get('hdd', {}) %}
 <p class="muted" style="font-size:13px">Проверено: {% if hdd_check.get('checked_at') %}<time data-monitoring-time="{{ hdd_check.checked_at }}">{{ hdd_check.checked_at }}</time>{% else %}ещё не проверено{% endif %}. Заполнение при циклической перезаписи само по себе не означает неисправность.</p>
 <table class="grid">
@@ -144,7 +162,8 @@
   </tbody>
 </table>
 
-<h2>Календарь архива (14 дней)</h2>
+<span id="archive-calendar" class="section-anchor"></span><h2>Календарь архива <span class="muted">14 дней · канал × день</span></h2>
+<div class="blueprint" style="padding:14px 16px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
 <div class="calendar-wrap">
 <table class="calendar">
   <thead><tr><th>Канал</th>
@@ -171,12 +190,14 @@
   <span class="cal cal-none"></span> нет записи
   <span class="cal cal-unknown"></span> нет данных
 </div>
+</div>
 
 <h2>Таймлайн архива по каналам</h2>
 <div class="tl-controls">
   <label>День: <select id="tl-day"></select></label>
   <span class="muted" id="tl-empty" style="display:none">Нет данных за этот день — нажмите «Проверить архив».</span>
 </div>
+<div class="blueprint" style="padding:14px 16px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
 <div class="tl-wrap">
   <div class="tl-scroll">
     <div id="tl-ruler" class="tl-ruler"></div>
@@ -187,10 +208,11 @@
   <span class="tl-swatch tl-rec"></span> запись
   <span class="tl-swatch tl-gap"></span> дыра
   <span class="tl-swatch tl-nodata"></span> нет данных
-  <span class="muted">· наведите на красный участок — покажет интервал</span>
+  <span class="muted">· наведите на акцентный участок — покажет интервал</span>
+</div>
 </div>
 
-<h2>События устройства</h2>
+<span id="device-events" class="section-anchor"></span><h2>События устройства</h2>
 <table class="grid">
   <thead><tr><th>Время</th><th>Тип</th><th>Уровень</th><th>Сообщение</th></tr></thead>
   <tbody>
@@ -198,14 +220,14 @@
     <tr>
       <td class="muted">{{ e.created_at | localtime('%d.%m %H:%M') }}</td>
       <td>{{ e.type }}</td>
-      <td><span class="badge {{ {'info':'ok','warning':'warn','critical':'err'}[e.severity] }}">{{ e.severity }}</span></td>
+      <td><span class="badge {{ {'info':'ok','warning':'warn','critical':'err'}[e.severity] }}">{{ {'info':'инфо','warning':'внимание','critical':'критично'}[e.severity] }}</span></td>
       <td>{{ e.message }}</td>
     </tr>
   {% else %}<tr><td colspan="4" class="muted">Событий нет.</td></tr>{% endfor %}
   </tbody>
 </table>
 
-<h2>Журнал обслуживания</h2>
+<span id="maintenance" class="section-anchor"></span><h2>Журнал обслуживания</h2>
 <form id="note-form" class="note-form">
   <input id="note-text" placeholder="Например: заменил БП 12.06; на гарантии до 2027; лезть с лестницей" required>
   <input id="note-ch" type="number" min="1" placeholder="канал (необяз.)" style="max-width:140px">

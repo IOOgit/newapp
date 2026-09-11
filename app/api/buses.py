@@ -30,6 +30,7 @@ from app.models import (
     AssetBatch,
     AssetStatus,
     Bus,
+    BusProblemLog,
     Disk,
     DiskLocation,
     DiskReview,
@@ -153,11 +154,37 @@ async def create_bus(data: schemas.BusCreate, session: AsyncSession = Depends(ge
     return {"id": bus.id}
 
 
+async def _open_problem_entry(session: AsyncSession, bus_id: int) -> BusProblemLog | None:
+    """Текущая (незакрытая) запись истории проблем автобуса."""
+    return (await session.execute(
+        select(BusProblemLog)
+        .where(BusProblemLog.bus_id == bus_id, BusProblemLog.closed_at.is_(None))
+        .order_by(BusProblemLog.id.desc())
+    )).scalars().first()
+
+
 @router.put("/api/buses/{bus_id}")
-async def update_bus(bus_id: int, data: schemas.BusUpdate, session: AsyncSession = Depends(get_session)):
+async def update_bus(bus_id: int, data: schemas.BusUpdate, request: Request,
+                     session: AsyncSession = Depends(get_session)):
     bus = await _bus(session, bus_id)
-    for k, v in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+    for k, v in payload.items():
         setattr(bus, k, v)
+    # История проблем: пометка открывает запись, снятие — закрывает,
+    # смена формулировки — закрывает старую и открывает новую.
+    if "has_problem" in payload or "problem_note" in payload:
+        user = request.session.get("user")
+        entry = await _open_problem_entry(session, bus_id)
+        if bus.has_problem:
+            if entry is None:
+                session.add(BusProblemLog(bus_id=bus_id, note=bus.problem_note, opened_by=user))
+            elif (bus.problem_note or None) != (entry.note or None):
+                entry.closed_at = utcnow()
+                entry.closed_by = user
+                session.add(BusProblemLog(bus_id=bus_id, note=bus.problem_note, opened_by=user))
+        elif entry is not None:
+            entry.closed_at = utcnow()
+            entry.closed_by = user
     await session.commit()
     return {"ok": True}
 
@@ -174,6 +201,8 @@ async def delete_bus(bus_id: int, session: AsyncSession = Depends(get_session)):
             d.status = DiskStatus.READY
             d.status_since = utcnow()
             d.location = DiskLocation.SHELF
+    # История проблем удалённого автобуса больше не нужна
+    await session.execute(delete(BusProblemLog).where(BusProblemLog.bus_id == bus.id))
     await session.delete(bus)
     await session.commit()
     return {"ok": True}
@@ -598,6 +627,31 @@ async def replace_asset(asset_id: int, data: schemas.AssetReplace, session: Asyn
     return {"ok": True, "installed": new.label, "removed": old.label}
 
 
+@router.get("/disks/{disk_id}/qr.png")
+async def disk_qr(disk_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    """QR-код со ссылкой на паспорт диска (для наклейки на сам диск)."""
+    from fastapi.responses import Response
+
+    import qrcode
+
+    disk = (await session.execute(select(Disk).where(Disk.id == disk_id))).scalar_one_or_none()
+    if disk is None:
+        raise HTTPException(404, "Диск не найден")
+    base = str(request.base_url).rstrip("/")
+    img = qrcode.make(f"{base}/disks/{disk.id}/passport")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
+@router.get("/disks/labels", response_class=HTMLResponse)
+async def disk_labels_page(request: Request, session: AsyncSession = Depends(get_session)):
+    """Печать QR-наклеек на диски (для ревизии сканированием)."""
+    disks = [d for d in await _disks(session) if d.status != DiskStatus.WRITTEN_OFF]
+    disks.sort(key=lambda d: d.label or "")
+    return templates.TemplateResponse("disk_labels.html", {"request": request, "disks": disks})
+
+
 @router.post("/api/disks/audit")
 async def disks_audit(data: schemas.AuditRequest, session: AsyncSession = Depends(get_session)):
     """Ревизия: отметить подтверждённые (физически найденные) диски."""
@@ -665,24 +719,170 @@ async def swaplog_csv(bus_id: int | None = None, disk_id: int | None = None,
                              headers={"Content-Disposition": "attachment; filename=swaplog.csv"})
 
 
+async def _problem_rows(session: AsyncSession) -> list[dict]:
+    """Автобусы с отмеченной проблемой (кнопка «проблема» на странице автобуса)."""
+    buses = list((await session.execute(
+        select(Bus).where(Bus.has_problem).order_by(Bus.route, Bus.bus_number)
+    )).scalars())
+    disks = {d.id: d for d in await _disks(session)}
+    # Сколько раз проблема отмечалась за всю историю — для динамики на листе.
+    counts: dict[int, int] = {}
+    for row in (await session.execute(select(BusProblemLog.bus_id))).scalars():
+        counts[row] = counts.get(row, 0) + 1
+    return [{
+        "bus": b, "disk": disks.get(b.installed_disk_id),
+        # проблемы, отмеченные до появления истории, в журнал не попали — минимум 1
+        "times": max(counts.get(b.id, 0), 1),
+    } for b in buses]
+
+
+async def _chronic_rows(session: AsyncSession, limit: int = 10) -> list[dict]:
+    """Топ «хронических» автобусов: проблема отмечалась 2+ раза за всю историю."""
+    stats: dict[int, dict] = {}
+    for bus_id, opened_at, closed_at in (await session.execute(
+        select(BusProblemLog.bus_id, BusProblemLog.opened_at, BusProblemLog.closed_at)
+    )).all():
+        s = stats.setdefault(bus_id, {"times": 0, "last": None, "open": False})
+        s["times"] += 1
+        if s["last"] is None or opened_at > s["last"]:
+            s["last"] = opened_at
+        if closed_at is None:
+            s["open"] = True
+    chronic_ids = [bid for bid, s in stats.items() if s["times"] >= 2]
+    if not chronic_ids:
+        return []
+    buses = {b.id: b for b in (await session.execute(
+        select(Bus).where(Bus.id.in_(chronic_ids)))).scalars()}
+    rows = [{"bus": buses[bid], **stats[bid]} for bid in chronic_ids if bid in buses]
+    rows.sort(key=lambda r: (-r["times"], r["bus"].bus_number))
+    return rows[:limit]
+
+
+@router.get("/buses/analytics", response_class=HTMLResponse)
+async def bus_analytics_page(request: Request, session: AsyncSession = Depends(get_session)):
+    """Аналитика проблем: по маршрутам, по месяцам, «хроника» — на базе bus_problem_log."""
+    buses = {b.id: b for b in (await session.execute(select(Bus))).scalars()}
+    entries = list((await session.execute(select(BusProblemLog))).scalars())
+    now = utcnow()
+
+    fixed_days = [max((_aware(e.closed_at) - _aware(e.opened_at)).days, 0)
+                  for e in entries if e.closed_at]
+    totals = {
+        "total": len(entries),
+        "last30": sum(1 for e in entries if (now - _aware(e.opened_at)).days <= 30),
+        "open": sum(1 for e in entries if e.closed_at is None),
+        "avg_fix": round(sum(fixed_days) / len(fixed_days), 1) if fixed_days else None,
+    }
+
+    # — по маршрутам: где болит чаще всего —
+    by_route: dict[str, dict] = {}
+    for e in entries:
+        b = buses.get(e.bus_id)
+        route = (b.route if b and b.route else "без маршрута")
+        r = by_route.setdefault(route, {"route": route, "total": 0, "open": 0, "buses": set()})
+        r["total"] += 1
+        if e.closed_at is None:
+            r["open"] += 1
+        r["buses"].add(e.bus_id)
+    routes = sorted(by_route.values(), key=lambda r: (-r["total"], _nat(r["route"])))
+    max_route = max((r["total"] for r in routes), default=1)
+    for r in routes:
+        r["buses"] = len(r["buses"])
+        r["pct"] = round(r["total"] / max_route * 100, 1)
+
+    # — по месяцам: последние 12, динамика во времени —
+    y, m = now.year, now.month
+    keys = []
+    for _ in range(12):
+        keys.append((y, m))
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    keys.reverse()
+    per_month = {k: 0 for k in keys}
+    for e in entries:
+        op = _aware(e.opened_at)
+        k = (op.year, op.month)
+        if k in per_month:
+            per_month[k] += 1
+    max_month = max(per_month.values(), default=0) or 1
+    months = [{
+        "label": f"{mm:02d}.{yy % 100:02d}", "count": per_month[(yy, mm)],
+        "pct": round(per_month[(yy, mm)] / max_month * 100),
+    } for yy, mm in keys]
+
+    chronic = await _chronic_rows(session)
+    return templates.TemplateResponse("bus_analytics.html", {
+        "request": request, "totals": totals, "routes": routes,
+        "months": months, "chronic": chronic,
+    })
+
+
+@router.get("/buses/problems", response_class=HTMLResponse)
+async def bus_problems_page(request: Request, session: AsyncSession = Depends(get_session)):
+    """Печатная сводка проблем: распечатать или сохранить в файл — интернет есть не везде."""
+    rows = await _problem_rows(session)
+    chronic = await _chronic_rows(session)
+    return templates.TemplateResponse("bus_problems.html", {
+        "request": request, "rows": rows, "chronic": chronic,
+        "printed_at": dt.datetime.now(),
+    })
+
+
+@router.get("/api/buses/problems.csv")
+async def bus_problems_csv(session: AsyncSession = Depends(get_session)):
+    """Выгрузка отмеченных проблем в CSV (Excel-совместимый, ;-разделитель)."""
+    rows = await _problem_rows(session)
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Автобус", "Маршрут", "Модель DVR", "Где стоит", "Диск", "Диск с",
+                "Проблема", "Раз отмечалась"])
+    for r in rows:
+        b, d = r["bus"], r["disk"]
+        w.writerow([
+            b.bus_number, b.route or "", b.dvr_model or "", b.location or "",
+            d.label if d else "нет диска",
+            b.installed_since.strftime("%Y-%m-%d") if b.installed_since else "",
+            b.problem_note or "проблема (без описания)",
+            r["times"],
+        ])
+    return StreamingResponse(iter(["﻿" + buf.getvalue()]),
+                             media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": "attachment; filename=bus_problems.csv"})
+
+
 # ── Страницы ─────────────────────────────────────────────────────────────────────
 @router.get("/buses", response_class=HTMLResponse)
 async def buses_page(request: Request, q: str = "", sort: str = "status",
                      session: AsyncSession = Depends(get_session)):
+    """Список автобусов: номер, закреплённые диски, отметка проблемы.
+
+    Упрощённая логика статуса (без дисковой ротации): проблема → red,
+    нет закреплённых дисков → yellow, иначе green.
+    """
     buses = list((await session.execute(select(Bus))).scalars())
     disks = await _disks(session)
-    swap_days, review_days = await _thresholds(session)
-    by_id = {d.id: d for d in disks}
-    now = utcnow()
-    rows, attention = [], []
+    assigned_map: dict[int, list[Disk]] = {}
+    for d in disks:
+        if d.assigned_bus_id and d.status != DiskStatus.WRITTEN_OFF:
+            assigned_map.setdefault(d.assigned_bus_id, []).append(d)
+    # сколько раз проблема отмечалась за историю — «N-й раз» на карточке
+    counts: dict[int, int] = {}
+    for bid in (await session.execute(select(BusProblemLog.bus_id))).scalars():
+        counts[bid] = counts.get(bid, 0) + 1
+    rows = []
     for b in buses:
         if q and q.lower() not in (f"{b.bus_number} {b.route or ''}").lower():
             continue
-        color, reason = bus_status(b, disks, swap_days)
-        cur = by_id.get(b.installed_disk_id) if b.installed_disk_id else None
-        rows.append({"bus": b, "color": color, "reason": reason, "disk": cur})
-        if color in ("red", "orange"):
-            attention.append({"bus": b, "reason": reason})
+        assigned = sorted(assigned_map.get(b.id, []), key=lambda d: _nat(d.label))
+        if b.has_problem:
+            color = "red"
+        elif not assigned:
+            color = "yellow"
+        else:
+            color = "green"
+        rows.append({"bus": b, "color": color, "assigned": assigned,
+                     "times": counts.get(b.id, 0)})
     # Сортировка: по статусу (проблемные сверху), по маршруту или по номеру
     if sort in ("route", "group"):
         rows.sort(key=lambda x: (_nat(x["bus"].route), _nat(x["bus"].bus_number)))
@@ -699,29 +899,15 @@ async def buses_page(request: Request, q: str = "", sort: str = "status",
             if not grouped or grouped[-1][0] != label:
                 grouped.append((label, []))
             grouped[-1][1].append(r)
-    # забытые на просмотре диски
-    stale = [
-        d for d in disks
-        if d.status == DiskStatus.REMOVED_REVIEW and d.status_since
-        and (now - _aware(d.status_since)).days >= review_days
-    ]
-    # сводка по парку
     summary = {
         "buses": len(buses),
-        "no_disk": sum(1 for b in buses if b.installed_disk_id is None),
-        "overdue": sum(
-            1 for b in buses
-            if b.swap_alert_enabled and b.installed_since
-            and (now - _aware(b.installed_since)).days >= swap_days
-        ),
-        "disk_ready": sum(1 for d in disks if d.status == DiskStatus.READY),
-        "disk_review": sum(1 for d in disks if d.status in (DiskStatus.REMOVED_REVIEW, DiskStatus.REVIEWED)),
-        "disk_faulty": sum(1 for d in disks if d.status == DiskStatus.FAULTY),
+        "problems": sum(1 for b in buses if b.has_problem),
+        "no_assigned": sum(1 for b in buses if not assigned_map.get(b.id)),
+        "disks_assigned": sum(len(v) for v in assigned_map.values()),
     }
     return templates.TemplateResponse("buses.html", {
-        "request": request, "rows": rows, "grouped": grouped, "attention": attention,
-        "stale_disks": stale, "q": q, "sort": sort, "summary": summary,
-        "swap_days": swap_days, "review_days": review_days,
+        "request": request, "rows": rows, "grouped": grouped,
+        "q": q, "sort": sort, "summary": summary,
     })
 
 
@@ -911,16 +1097,16 @@ async def bus_page(bus_id: int, request: Request, session: AsyncSession = Depend
     if bus is None:
         return HTMLResponse("Автобус не найден", status_code=404)
     disks = await _disks(session)
-    swap_days, _ = await _thresholds(session)
-    by_id = {d.id: d for d in disks}
-    color, reason = bus_status(bus, disks, swap_days)
-    assigned = [d for d in disks if d.assigned_bus_id == bus.id]
-    # Резерв для установки: сначала закреплённые за этим автобусом, потом остальные.
-    ready = sorted(
-        (d for d in disks if d.status == DiskStatus.READY),
-        key=lambda d: (0 if d.assigned_bus_id == bus.id else 1, (d.label or "")),
-    )
-    history = await _swaplog(session, bus_id=bus_id)
+    assigned = sorted((d for d in disks if d.assigned_bus_id == bus.id
+                       and d.status != DiskStatus.WRITTEN_OFF), key=lambda d: _nat(d.label))
+    # свободные диски — для закрепления прямо со страницы автобуса
+    free_disks = sorted((d for d in disks if not d.assigned_bus_id
+                         and d.status != DiskStatus.WRITTEN_OFF), key=lambda d: _nat(d.label))
+    color = "red" if bus.has_problem else ("yellow" if not assigned else "green")
+    problem_log = list((await session.execute(
+        select(BusProblemLog).where(BusProblemLog.bus_id == bus_id)
+        .order_by(BusProblemLog.id.desc()).limit(50)
+    )).scalars())
     # Оборудование автобуса: закреплённые регистраторы/камеры (не списанные)
     equipment = [
         a for a in (await session.execute(
@@ -929,10 +1115,9 @@ async def bus_page(bus_id: int, request: Request, session: AsyncSession = Depend
     ]
     equipment.sort(key=lambda a: (a.kind, a.label))
     return templates.TemplateResponse("bus.html", {
-        "request": request, "bus": bus, "color": color, "reason": reason,
-        "installed": by_id.get(bus.installed_disk_id) if bus.installed_disk_id else None,
-        "assigned": assigned, "ready_disks": ready, "history": history,
-        "disks_by_id": by_id, "equipment": equipment,
+        "request": request, "bus": bus, "color": color,
+        "assigned": assigned, "free_disks": free_disks,
+        "problem_log": problem_log, "equipment": equipment,
         "kinds": ASSET_KINDS, "asset_statuses": ASSET_STATUSES,
     })
 

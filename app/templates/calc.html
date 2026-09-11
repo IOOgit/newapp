@@ -1,16 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Калькулятор хранилища — NVR Monitor{% endblock %}
 {% block content %}
+<div class="kicker">Инфраструктура · планирование</div>
 <h1>Калькулятор хранилища</h1>
+<div class="rule"></div>
 
-<div class="calc">
-  <label>Камер, шт <input id="c-cams" type="number" value="16"></label>
-  <label>Битрейт на камеру, Мбит/с <input id="c-br" type="number" value="4" step="0.5"></label>
-  <label>Часов записи в сутки <input id="c-hours" type="number" value="24"></label>
-  <label>Глубина архива, дней <input id="c-days" type="number" value="30"></label>
-  <label>Запас на сбои, % <input id="c-spare" type="number" value="10"></label>
+<div style="display:grid;grid-template-columns:5fr 7fr;gap:28px;margin-top:26px;align-items:start" class="calc-cols">
+  <div class="calc" style="grid-template-columns:1fr">
+    <label>Камер, шт <input id="c-cams" type="number" value="16"></label>
+    <label>Битрейт на камеру, Мбит/с <input id="c-br" type="number" value="4" step="0.5"></label>
+    <label>Часов записи в сутки <input id="c-hours" type="number" value="24"></label>
+    <label>Глубина архива, дней <input id="c-days" type="number" value="30"></label>
+    <label>Запас на сбои, % <input id="c-spare" type="number" value="10"></label>
+  </div>
+  <div class="blueprint calc-result"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class="calc-cap">Требуемый объём</div>
+    <div class="calc-big" id="calc-out">—</div>
+    <div class="calc-sub" id="calc-sub"></div>
+    <div class="rule" style="margin:20px 0 14px"></div>
+    <div id="calc-rows"></div>
+    <div class="muted" style="font-size:12.5px;margin-top:14px">Формула: камеры × битрейт ÷ 8 × 3600 × часы × дни × (1 + запас). Реальный поток H.265 обычно ниже номинала на 20–40%.</div>
+  </div>
 </div>
-<h2 id="calc-out">—</h2>
+<style>@media (max-width: 900px){ .calc-cols{grid-template-columns:1fr !important} }</style>
 
 <script>
 function calc() {
@@ -22,8 +34,17 @@ function calc() {
   // Мбит/с -> МБ/с = /8; * сек * часов * дней
   const gb = cams * br / 8 * 3600 * hours * days / 1024 * (1 + spare / 100);
   const tb = gb / 1024;
-  document.getElementById("calc-out").textContent =
-    `Нужно ≈ ${tb.toFixed(2)} ТБ (${Math.round(gb)} ГБ)`;
+  document.getElementById("calc-out").innerHTML = `≈ ${tb.toFixed(2)} <small>ТБ</small>`;
+  document.getElementById("calc-sub").textContent = `${Math.round(gb)} ГБ с учётом запаса`;
+  const rows = [
+    ["Поток одной камеры", (br / 8 * 3600 * hours / 1024).toFixed(1) + " ГБ/сутки"],
+    ["Поток всех камер", (cams * br / 8 * 3600 * hours / 1024).toFixed(0) + " ГБ/сутки"],
+    ["Архив без запаса", Math.round(gb / (1 + spare / 100)) + " ГБ"],
+    ["Рекомендация", Math.ceil(tb / 2) + " × 2 ТБ HDD"],
+  ];
+  document.getElementById("calc-rows").innerHTML = rows.map(([k, v]) =>
+    `<div style="display:flex;justify-content:space-between;gap:14px;font-size:14px;padding:5px 0">
+       <span class="muted">${k}</span><span style="font-weight:600">${v}</span></div>`).join("");
 }
 document.querySelectorAll(".calc input").forEach(i => i.addEventListener("input", calc));
 calc();

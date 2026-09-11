@@ -1,33 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Доска проблем — NVR Monitor{% endblock %}
 {% block content %}
-<div class="wl-head">
-  <h1>🛠 Доска проблем</h1>
-</div>
-
-<section class="bus-summary">
-  <div class="bus-tile"><span class="num">{{ summary.total }}</span><span>всего проблем</span></div>
-  <div class="bus-tile {{ 'bad' if summary.critical else '' }}"><span class="num">{{ summary.critical }}</span><span>критичных</span></div>
-  <div class="bus-tile {{ 'warn' if summary.warning else '' }}"><span class="num">{{ summary.warning }}</span><span>предупреждений</span></div>
-  <div class="bus-tile"><span class="num">{{ summary.open }}</span><span>не разобрано</span></div>
-  <div class="bus-tile"><span class="num">{{ summary.taken }}</span><span>в работе</span></div>
-</section>
-
-<div class="wl-bulk">
-  <div class="wl-bulk-row">
+<div class="kicker">Мониторинг · разбор инцидентов</div>
+<div class="page-head wl-head">
+  <h1>Доска проблем</h1>
+  <div class="device-actions">
     <select id="bulk-group">
       <option value="">Все объекты</option>
       {% for gid, g in groups.items() %}<option value="{{ gid }}">{{ g.name }}</option>{% endfor %}
     </select>
-    <button onclick="bulkRun('poll')">🔄 Опросить все</button>
-    <button onclick="bulkRun('sync_time')">🕐 Синхр. время</button>
-    <button onclick="bulkRun('archive_check')">🎞 Проверить архив</button>
-    <button onclick="bulkRun('quality_check')">📷 Проверить качество</button>
+    <button onclick="bulkRun('poll')">Опросить все</button>
+    <button onclick="bulkRun('sync_time')">Синхр. время</button>
+    <button onclick="bulkRun('archive_check')">Проверить архив</button>
+    <button onclick="bulkRun('quality_check')">Проверить качество</button>
   </div>
-  <div id="bulk-progress" class="wl-progress" style="display:none">
-    <div class="wl-progress-bar"><div id="bulk-fill" class="wl-progress-fill"></div></div>
-    <div class="wl-progress-text muted" id="bulk-text"></div>
-  </div>
+</div>
+<div class="rule"></div>
+
+<section class="bus-summary">
+  <div class="bus-tile"><span class="num">{{ summary.total }}</span><span>всего проблем</span></div>
+  <div class="bus-tile {{ 'bad' if summary.critical else '' }}"><span class="num">{{ summary.critical }}</span><span>критичных</span></div>
+  <div class="bus-tile"><span class="num">{{ summary.warning }}</span><span>предупреждений</span></div>
+  <div class="bus-tile {{ 'bad' if summary.open else '' }}"><span class="num">{{ summary.open }}</span><span>не разобрано</span></div>
+  <div class="bus-tile"><span class="num">{{ summary.taken }}</span><span>в работе</span></div>
+</section>
+
+<div id="bulk-progress" class="wl-progress" style="display:none">
+  <div class="wl-progress-bar"><div id="bulk-fill" class="wl-progress-fill"></div></div>
+  <div class="wl-progress-text muted" id="bulk-text"></div>
 </div>
 
 <div class="wl-filters">
@@ -36,17 +36,17 @@
 </div>
 
 {% if not issues %}
-  <div class="wl-empty">✅ Проблем нет — все объекты в норме.</div>
+  <div class="wl-empty blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>Проблем нет<div style="font-family:var(--font-body);font-size:14px;font-weight:400;letter-spacing:0;text-transform:none;margin-top:6px" class="muted">Все объекты в норме.</div></div>
 {% else %}
 <div class="wl-list">
-  {% set kind_icon = {'unreachable':'🔌','channel':'📴','quality':'📷','drift':'🕐','archive':'🎞','hdd':'💽','recording':'🎞','switch':'🔀'} %}
+  {% set kind_tag = {'unreachable':'СЕТЬ','channel':'КАМ','quality':'КАЧ','drift':'ВРЕМЯ','archive':'АРХ','hdd':'HDD','recording':'ЗАПИСЬ','switch':'SW'} %}
   {% for i in issues %}
   <div class="wl-item sev-{{ i.severity }} {{ 'taken' if i.ack else '' }}"
        data-sev="{{ i.severity }}" data-taken="{{ '1' if i.ack else '0' }}">
     <span class="wl-sev"></span>
+    <span class="badge warn" style="flex:none;min-width:52px;justify-content:center">{{ kind_tag.get(i.kind, '⚠') }}</span>
     <div class="wl-main">
       <div class="wl-title">
-        <span class="wl-icon">{{ kind_icon.get(i.kind, '⚠️') }}</span>
         <a href="{{ i.target_url if i.target_url is defined else '/devices/' ~ i.device_id }}">{{ i.device_name }}</a>
         <span class="wl-sep">·</span> {{ i.title }}
       </div>

@@ -1,18 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Прошивки — NVR Monitor{% endblock %}
 {% block content %}
+<div class="kicker">Инфраструктура · контроль версий</div>
 <h1>Контроль прошивок</h1>
+<div class="rule"></div>
 
 {% for r in rows %}
-  <h2>{{ r.model }} {% if r.mixed %}<span class="badge warn">разнобой прошивок</span>{% endif %}</h2>
+  <h2>{{ r.model }} {% if r.mixed %}<span class="badge err">разнобой прошивок</span>{% endif %} <span class="muted">{{ r.devices|length }} шт.</span></h2>
+  {# преобладающая версия — отличающиеся выделяем акцентом #}
+  {% set fws = r.devices | map(attribute='firmware') | select | list %}
+  {% set nsf = namespace(major='', best=0) %}
+  {% for f in fws %}{% if fws.count(f) > nsf.best %}{% set nsf.best = fws.count(f) %}{% set nsf.major = f %}{% endif %}{% endfor %}
   <table class="grid">
     <thead><tr><th>Объект</th><th>Host</th><th>Прошивка</th><th>Серийник</th></tr></thead>
     <tbody>
     {% for d in r.devices %}
       <tr>
         <td><a href="/devices/{{ d.id }}">{{ d.name }}</a></td>
-        <td>{{ d.host }}</td>
-        <td>{{ d.firmware or '—' }}</td>
+        <td class="muted">{{ d.host }}</td>
+        <td {% if r.mixed and d.firmware and d.firmware != nsf.major %}style="color:var(--color-accent);font-weight:600"{% endif %}>{{ d.firmware or '—' }}</td>
         <td class="muted">{{ d.serial or '—' }}</td>
       </tr>
     {% endfor %}

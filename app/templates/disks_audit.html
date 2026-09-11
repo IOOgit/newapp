@@ -2,22 +2,36 @@
 {% block title %}Ревизия дисков{% endblock %}
 {% block content %}
 <div class="bus-scope">
-  <a href="/disks" class="muted">← к реестру</a>
-  <div class="bus-banner">
-    <div><span class="bus-ico">🧮</span> <b>Ревизия дисков</b></div>
+  <a href="/disks" style="font-size:13px;font-weight:600;color:var(--color-accent-700)">← к реестру</a>
+  <div class="page-head" style="margin-top:14px">
     <div>
+      <div class="kicker" style="margin-bottom:8px">Автобусы · ручной учёт</div>
+      <h1>Ревизия дисков</h1>
+    </div>
+    <div class="device-actions">
+      <button class="bus-btn" id="scan-btn" onclick="startScan()">📷 Сканировать</button>
+      <a class="bus-btn" href="/disks/labels">QR-наклейки</a>
       <button class="bus-btn" onclick="checkAll()">Отметить все</button>
-      <button class="bus-btn" style="background:#2ecc71" onclick="saveAudit()">Сохранить ревизию</button>
+      <button class="bus-btn primary" onclick="saveAudit()">Сохранить ревизию</button>
     </div>
   </div>
-  <p class="muted">Пройдись по дискам и отметь те, что физически нашёл. Неотмеченные / давно не проверенные — подсвечены: возможно, потеряны.</p>
+  <div class="rule"></div>
+  <p class="muted" style="margin-top:10px">Пройдись по дискам и отметь найденные — галочкой, сканером QR-наклейки
+    или вводом метки ниже. Неотмеченные / давно не проверенные — подсвечены: возможно, потеряны.</p>
+
+  <form class="bus-search" onsubmit="return markByLabel()" style="margin-top:6px">
+    <input id="label-input" placeholder="Быстрый ввод: метка диска + Enter (например B-07)" autocomplete="off">
+    <button class="bus-btn">Отметить</button>
+    <span class="muted" id="scan-status" style="align-self:center"></span>
+  </form>
 
   <table class="grid">
     <thead><tr><th>✓</th><th>Метка</th><th>Тип</th><th>Статус</th><th>Где (по системе)</th><th>Автобус</th><th>Последняя ревизия</th></tr></thead>
     <tbody>
     {% set sl = {'installed':'установлен','ready':'резерв','removed_review':'на просмотре','reviewed':'просмотрен','faulty':'неисправен','written_off':'списан'} %}
     {% for it in items %}
-      <tr class="{{ 'audit-stale' if it.audit_age is none or it.audit_age > 30 else '' }}">
+      <tr class="{{ 'audit-stale' if it.audit_age is none or it.audit_age > 30 else '' }}"
+          data-disk-id="{{ it.disk.id }}" data-label="{{ (it.disk.label or '') | lower }}">
         <td><input type="checkbox" class="audit-chk" value="{{ it.disk.id }}"></td>
         <td><a href="/disks/{{ it.disk.id }}/passport"><b>{{ it.disk.label }}</b></a></td>
         <td>{{ it.disk.type }}</td>
@@ -31,6 +45,19 @@
   </table>
 </div>
 
+<!-- Оверлей сканера QR (камера) -->
+<div id="scan-modal" class="modal hidden">
+  <div class="modal-card" style="width:420px">
+    <h3>Сканирование наклеек</h3>
+    <video id="scan-video" style="width:100%;background:var(--color-neutral-900)" muted playsinline></video>
+    <p class="muted" id="scan-hint" style="margin:10px 0 0;font-size:13px">Наводи камеру на QR-наклейки дисков подряд —
+      найденные отмечаются сами. Отмечено: <b id="scan-count">0</b></p>
+    <div class="actions" style="display:flex;gap:10px;margin-top:14px">
+      <button type="button" class="bus-btn primary" onclick="stopScan()">Готово</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function checkAll(){ document.querySelectorAll(".audit-chk").forEach(c => c.checked = true); }
 async function saveAudit(){
@@ -39,6 +66,71 @@ async function saveAudit(){
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ present_ids: ids }) });
   if (r.ok) { alert("Подтверждено дисков: " + (await r.json()).confirmed); location.reload(); }
   else alert("Ошибка: " + (await r.text()));
+}
+
+// ── отметка по метке/по id: общий путь для сканера и ручного ввода ──────────
+function markRow(row){
+  const chk = row.querySelector(".audit-chk");
+  const isNew = !chk.checked;
+  chk.checked = true;
+  row.style.background = "var(--color-accent-100)";
+  if (isNew && navigator.vibrate) navigator.vibrate(80);
+  return isNew;
+}
+function markByLabel(){
+  const inp = document.getElementById("label-input");
+  const q = inp.value.trim().toLowerCase();
+  if (!q) return false;
+  const row = [...document.querySelectorAll("tr[data-label]")].find(r => r.dataset.label === q);
+  const st = document.getElementById("scan-status");
+  if (row) { markRow(row); st.textContent = "✓ " + inp.value.trim(); }
+  else st.textContent = "не найдено: " + inp.value.trim();
+  inp.value = ""; inp.focus();
+  return false;
+}
+
+// ── сканер QR камерой (BarcodeDetector; нужен HTTPS или localhost) ──────────
+let scanStream = null, scanTimer = null, scanCount = 0;
+async function startScan(){
+  if (!("BarcodeDetector" in window)) {
+    alert("Этот браузер не умеет распознавать QR (нужен Chrome/Android). Используй быстрый ввод метки.");
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert("Камера недоступна: браузер даёт её только по HTTPS (профиль https в docker-compose) или на localhost. Используй быстрый ввод метки.");
+    return;
+  }
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (e) { alert("Не удалось открыть камеру: " + e.message); return; }
+  const video = document.getElementById("scan-video");
+  video.srcObject = scanStream;
+  await video.play();
+  document.getElementById("scan-modal").classList.remove("hidden");
+  scanCount = [...document.querySelectorAll(".audit-chk:checked")].length;
+  document.getElementById("scan-count").textContent = scanCount;
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  scanTimer = setInterval(async () => {
+    try {
+      const codes = await detector.detect(video);
+      for (const c of codes) {
+        // в QR — ссылка на паспорт диска: /disks/<id>/passport
+        const m = (c.rawValue || "").match(/\/disks\/(\d+)\/passport/);
+        if (!m) continue;
+        const row = document.querySelector(`tr[data-disk-id="${m[1]}"]`);
+        if (row && markRow(row)) {
+          scanCount++;
+          document.getElementById("scan-count").textContent = scanCount;
+        }
+      }
+    } catch (e) { /* кадр не распознался — пробуем следующий */ }
+  }, 400);
+}
+function stopScan(){
+  if (scanTimer) clearInterval(scanTimer);
+  if (scanStream) scanStream.getTracks().forEach(t => t.stop());
+  scanTimer = scanStream = null;
+  document.getElementById("scan-modal").classList.add("hidden");
 }
 </script>
 {% endblock %}

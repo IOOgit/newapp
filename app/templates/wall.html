@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Стена камер — {{ device.name }}{% endblock %}
 {% block content %}
-<a href="/devices/{{ device.id }}" class="muted">← к устройству</a>
-<div class="device-head">
-  <h1>Стена камер — {{ device.name }}</h1>
+<a href="/devices/{{ device.id }}" style="font-size:13px;font-weight:600;color:var(--color-accent-700)">← к устройству</a>
+<div class="device-head" style="margin-top:14px">
+  <div>
+    <div class="kicker" style="margin-bottom:8px">{{ device.host }}:{{ device.http_port }}</div>
+    <h1>Стена камер</h1>
+  </div>
   <div class="device-actions">
     <label class="muted">Обновлять каждые
       <select id="refresh-int">
@@ -15,6 +18,7 @@
     </label>
   </div>
 </div>
+<div class="rule" style="margin-bottom:16px"></div>
 
 <div class="wall">
   {% set m = {'online':'ok','offline':'err','no_video':'warn','unknown':'muted'} %}

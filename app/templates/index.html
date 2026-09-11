@@ -1,14 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
+{% macro corners() %}<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>{% endmacro %}
+
+<div class="kicker">Мониторинг · централизованный опрос парка</div>
+<div class="page-head">
+  <h1>Дашборд</h1>
+  <div class="device-actions">
+    <select id="bulk-group">
+      <option value="">Все объекты</option>
+      {% for gid, g in groups.items() %}<option value="{{ gid }}">{{ g.name }}</option>{% endfor %}
+    </select>
+    <button onclick="bulkRun('poll')">Опросить</button>
+    <button onclick="bulkRun('sync_time')">Синхр. время</button>
+    <button onclick="bulkRun('archive_check')">Проверить архив</button>
+    <button onclick="bulkRun('quality_check')">Проверить качество</button>
+    <button id="add-device-btn" class="primary">+ Устройство</button>
+  </div>
+</div>
+<div class="rule"></div>
+
 <section class="cards">
   <div class="card"><span class="num">{{ stats.devices_total }}</span><span>Всего NVR</span></div>
-  <div class="card ok"><span class="num">{{ stats.devices_online }}</span><span>Онлайн</span></div>
-  <div class="card warn"><span class="num">{{ stats.devices_with_problems }}</span><span>С проблемами</span></div>
-  <div class="card err"><span class="num">{{ stats.devices_unreachable }}</span><span>Недоступны</span></div>
-  <div class="card"><span class="num">{{ stats.channels_down }}</span><span>Каналов не в норме</span></div>
+  <div class="card"><span class="num">{{ stats.devices_online }}</span><span>Онлайн</span></div>
+  <div class="card {{ 'warn' if stats.devices_with_problems else '' }}"><span class="num">{{ stats.devices_with_problems }}</span><span>С проблемами</span></div>
+  <div class="card {{ 'err' if stats.devices_unreachable else '' }}"><span class="num">{{ stats.devices_unreachable }}</span><span>Недоступны</span></div>
+  <div class="card {{ 'warn' if stats.channels_down else '' }}"><span class="num">{{ stats.channels_down }}</span><span>Каналов не в норме</span></div>
 </section>
 
-{# В знаменателях только устройства и каналы с включённым мониторингом. #}
+{# В знаменателях только включённые устройства и каналы. #}
 {% set ns = namespace(ch_total=0, ch_online=0, green=0, monitored=0) %}
 {% for d in devices if d.enabled %}
   {% set monitored_channels = d.channels | selectattr('enabled') | list %}
@@ -17,55 +36,56 @@
   {% set ns.ch_online = ns.ch_online + ((monitored_channels | selectattr('status','equalto','online') | list | length) if d.reachable else 0) %}
   {% if health_by_id[d.id].color == 'green' %}{% set ns.green = ns.green + 1 %}{% endif %}
 {% endfor %}
-{% set cam_pct = ((ns.ch_online / ns.ch_total * 100) | round | int) if ns.ch_total else 0 %}
-{% set obj_pct = ((ns.green / ns.monitored * 100) | round | int) if ns.monitored else 0 %}
+{% set cam_pct = ((ns.ch_online / ns.ch_total * 100) | round(1)) if ns.ch_total else 0 %}
+{% set obj_pct = ((ns.green / ns.monitored * 100) | round(1)) if ns.monitored else 0 %}
 {% set arch_total = (archive.totals.full + archive.totals.partial + archive.totals.none) if archive.day else 0 %}
-{% set arch_pct = ((archive.totals.full / arch_total * 100) | round | int) if arch_total else 0 %}
+{% set arch_full_pct = ((archive.totals.full / arch_total * 100) | round(1)) if arch_total else 0 %}
+{% set arch_part_pct = ((archive.totals.partial / arch_total * 100) | round(1)) if arch_total else 0 %}
+{% set arch_none_pct = ((archive.totals.none / arch_total * 100) | round(1)) if arch_total else 0 %}
 
-<section class="kpi-row" style="margin-top:18px;">
-  {# Кольцо: камеры онлайн #}
-  <div class="chart-card kpi-viz">
+<section class="kpi-row" style="margin-top:22px">
+  {# Камеры: полоса online / не-в-норме #}
+  <div class="chart-card blueprint">{{ corners() }}
     <div class="chart-head"><h3>Камеры</h3><span class="sub">{{ ns.ch_total }} под контролем</span></div>
-    <div class="viz-body">
-      <div class="ring-flex">
-        <div class="ring" style="--p:{{ cam_pct }}">
-          <span class="ring-val">{{ ns.ch_online }}<small>онлайн</small></span>
-        </div>
-        <div class="ring-legend">
-          <span class="lg"><span class="d" style="background:var(--accent)"></span>Онлайн <b>{{ ns.ch_online }}</b></span>
-          <span class="lg"><span class="d" style="background:var(--err)"></span>Не в норме <b>{{ ns.ch_total - ns.ch_online }}</b></span>
-        </div>
-      </div>
+    <div class="kpi-big">{{ ns.ch_online }}<small>/ {{ ns.ch_total }} онлайн</small></div>
+    <div class="kpi-bar">
+      <i class="seg-ink" style="width:{{ cam_pct }}%" title="онлайн"></i>
+      <i class="seg-accent" style="width:{{ 100 - cam_pct }}%" title="не в норме"></i>
+    </div>
+    <div class="kpi-legend">
+      <span><span class="d ink"></span>онлайн {{ ns.ch_online }}</span>
+      <span><span class="d acc"></span>не в норме {{ ns.ch_total - ns.ch_online }}</span>
     </div>
   </div>
 
-  {# Gauge: объекты в норме #}
-  <div class="chart-card kpi-viz">
+  {# Объекты в норме #}
+  <div class="chart-card blueprint">{{ corners() }}
     <div class="chart-head"><h3>NVR в норме</h3><span class="sub">{{ ns.green }} / {{ ns.monitored }}</span></div>
-    <div class="viz-body">
-      <div class="gauge-wrap">
-        <div class="gauge" style="--p:{{ obj_pct }}">
-          <div class="g-arc"></div><div class="g-hole"></div><div class="g-val">{{ obj_pct }}%</div>
-        </div>
-        <span class="g-cap">состояние сейчас</span>
-      </div>
+    <div class="kpi-big">{{ obj_pct | round | int }}<small>% подтверждено сейчас</small></div>
+    <div class="kpi-bar">
+      <i class="seg-ink" style="width:{{ obj_pct }}%" title="в норме"></i>
+      <i class="seg-accent" style="width:{{ 100 - obj_pct }}%" title="с проблемами"></i>
+    </div>
+    <div class="kpi-legend">
+      <span><span class="d ink"></span>в норме {{ ns.green }}</span>
+      <span><span class="d acc"></span>прочие {{ ns.monitored - ns.green }}</span>
     </div>
   </div>
 
-  {# Кольцо: покрытие архива (если были проверки) #}
+  {# Покрытие архива (если были проверки) #}
   {% if archive.day %}
-  <div class="chart-card kpi-viz">
+  <div class="chart-card blueprint">{{ corners() }}
     <div class="chart-head"><h3>Покрытие архива</h3><span class="sub">за {{ archive.day[8:10] }}.{{ archive.day[5:7] }}</span></div>
-    <div class="viz-body">
-      <div class="ring-flex">
-        <div class="ring {{ 'ok' if arch_total else '' }}" style="--p:{{ arch_pct }}"><span class="ring-val">{{ (arch_pct ~ '%') if arch_total else '—' }}<small>из проверенных</small></span></div>
-        <div class="ring-legend">
-          <span class="lg"><span class="d" style="background:var(--ok)"></span>С записью <b>{{ archive.totals.full }}</b></span>
-          <span class="lg"><span class="d" style="background:var(--warn)"></span>Дыры <b>{{ archive.totals.partial }}</b></span>
-          <span class="lg"><span class="d" style="background:var(--err)"></span>Без записи <b>{{ archive.totals.none }}</b></span>
-          <span class="lg"><span class="d" style="background:var(--muted)"></span>Нет данных <b>{{ archive.totals.no_data }}</b></span>
-        </div>
-      </div>
+    <div class="kpi-big">{{ arch_full_pct | round | int }}<small>% каналов с записью</small></div>
+    <div class="kpi-bar">
+      <i class="seg-ink" style="width:{{ arch_full_pct }}%" title="с записью"></i>
+      <i class="seg-hatch" style="width:{{ arch_part_pct }}%" title="частично"></i>
+      <i class="seg-accent" style="width:{{ arch_none_pct }}%" title="без записи"></i>
+    </div>
+    <div class="kpi-legend">
+      <span><span class="d ink"></span>запись {{ archive.totals.full }}</span>
+      <span><span class="d hatch"></span>дыры {{ archive.totals.partial }}</span>
+      <span><span class="d acc"></span>нет {{ archive.totals.none }}</span>
     </div>
   </div>
   {% endif %}
@@ -75,52 +95,47 @@
   {% set ns2 = namespace(line='') %}
   {% for v in events_24h %}
     {% set x = (loop.index0 * (320 / 23)) | round(1) %}
-    {% set y = (52 - (v / mx * 44)) | round(1) %}
+    {% set y = (42 - (v / mx * 38)) | round(1) %}
     {% set ns2.line = ns2.line ~ x ~ ',' ~ y ~ ' ' %}
   {% endfor %}
-  <div class="chart-card kpi-viz">
-    <div class="chart-head"><h3>События</h3><span class="sub">24 ч · {{ events_24h_total }}</span></div>
-    <div class="viz-body viz-col">
-      <svg class="spark" viewBox="0 0 320 56" preserveAspectRatio="none">
-        <polygon class="spark-area" points="0,56 {{ ns2.line }} 320,56"></polygon>
-        <polyline class="spark-line" points="{{ ns2.line }}"></polyline>
-      </svg>
-      <div class="spark-axis"><span>−24 ч</span><span>−12 ч</span><span>сейчас</span></div>
-    </div>
+  <div class="chart-card blueprint">{{ corners() }}
+    <div class="chart-head"><h3>События</h3><span class="sub">за 24 часа</span></div>
+    <div class="kpi-big">{{ events_24h_total }}<small>всего</small></div>
+    <svg class="spark" viewBox="0 0 320 44" preserveAspectRatio="none">
+      <polygon class="spark-area" points="0,44 {{ ns2.line }} 320,44"></polygon>
+      <polyline class="spark-line" points="{{ ns2.line }}"></polyline>
+    </svg>
+    <div class="spark-axis"><span>−24 ч</span><span>−12 ч</span><span>сейчас</span></div>
   </div>
 </section>
 
-{% if archive.day %}
-<h2>🎞 Архив записи <span class="muted" style="font-size:14px">за {{ archive.day[8:10] }}.{{ archive.day[5:7] }}</span></h2>
-<section class="cards">
-  <div class="card ok"><span class="num">{{ archive.totals.full }}</span><span>каналов с записью</span></div>
-  <div class="card warn"><span class="num">{{ archive.totals.partial }}</span><span>частично (дыры)</span></div>
-  <div class="card err"><span class="num">{{ archive.totals.none }}</span><span>без записи</span></div>
-  <div class="card"><span class="num">{{ archive.totals.no_data }}</span><span>нет данных</span></div>
-</section>
-{% else %}
-<h2>🎞 Архив записи</h2>
+{# Панель «Парк · N NVR» — изометрическая стойка (строит iso.js из /api/devices + /api/worklist) #}
+<div class="blueprint rack-panel" id="side-rack" hidden>{{ corners() }}
+  <div style="flex:none">
+    <div class="rack-cap" id="rack-cap">Парк NVR</div>
+    <svg id="rack-svg" fill="none" stroke-linejoin="round"></svg>
+  </div>
+  <div class="rack-side">
+    <div class="rack-legend" id="rack-legend"></div>
+  </div>
+</div>
+
+{% if not archive.day %}
+<h2>Архив записи</h2>
 <p class="muted">Проверок архива ещё не было — он проверяется автоматически раз в сутки (за прошедшие сутки).</p>
 {% endif %}
 
-<h2>Объекты</h2>
-<div class="bulkbar">
-  <select id="bulk-group">
-    <option value="">Все объекты</option>
-    {% for gid, g in groups.items() %}<option value="{{ gid }}">{{ g.name }}</option>{% endfor %}
-  </select>
-  <button onclick="bulkRun('poll')">Опросить</button>
-  <button onclick="bulkRun('sync_time')">Синхр. время</button>
-  <button onclick="bulkRun('archive_check')">Проверить архив</button>
-  <button onclick="bulkRun('quality_check')">Проверить качество</button>
-  <a class="bulk-link" href="/worklist">🛠 Доска проблем →</a>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:34px">
+  <h2 style="margin:0">Объекты</h2>
+  <a class="bulk-link" href="/worklist">Доска проблем →</a>
 </div>
 <div id="bulk-progress" class="wl-progress" style="display:none">
   <div class="wl-progress-bar"><div id="bulk-fill" class="wl-progress-fill"></div></div>
   <div class="wl-progress-text muted" id="bulk-text"></div>
 </div>
-<table class="grid">
-  <thead><tr><th></th><th>Объект</th><th>Группа</th><th>Host</th><th>Тип</th><th>Каналы</th><th>Статус</th><th>Архив</th></tr></thead>
+<div class="table-wrap">
+<table class="grid" style="margin-top:12px">
+  <thead><tr><th style="width:26px"></th><th>Объект</th><th>Группа</th><th>Host</th><th>Тип</th><th>Каналы</th><th>Статус</th><th>Архив</th></tr></thead>
   <tbody>
   {% for d in devices %}
     {% set health = health_by_id[d.id] %}
@@ -129,26 +144,22 @@
     <tr>
       <td><span class="dot {{ health.color }}" title="{{ health.label }}"></span></td>
       <td><a href="/devices/{{ d.id }}">{{ d.name }}</a></td>
-      <td>{{ groups[d.group_id].name if d.group_id else '—' }}</td>
-      <td>{{ d.host }}:{{ d.http_port }}</td>
-      <td>{{ d.api_type }}{% if d.model %} · {{ d.model }}{% endif %}</td>
+      <td class="muted">{{ groups[d.group_id].name if d.group_id else '—' }}</td>
+      <td class="muted">{{ d.host }}:{{ d.http_port }}</td>
+      <td class="muted">{{ d.api_type }}{% if d.model %} · {{ d.model }}{% endif %}</td>
       <td>{% if d.enabled %}{{ up }}/{{ monitored_channels|length }}{% else %}<span class="muted">отключён</span>{% endif %}</td>
       <td>
         <span class="badge {{ {'green':'ok','yellow':'warn','red':'err','gray':'muted'}.get(health.color, 'muted') }}">{{ health.label }}</span>
-        {% for issue in health.issues[:2] %}
-          <div style="font-size:12px;margin-top:4px" title="{{ issue.detail }}">{{ issue.title }}</div>
-        {% endfor %}
-        {% if health.issues|length > 2 %}
-          <a class="muted" style="font-size:12px" href="/devices/{{ d.id }}#monitoring-health">Ещё {{ health.issues|length - 2 }}</a>
-        {% endif %}
+        {% if health.issues %}<a class="muted" style="font-size:12px;display:block;margin-top:4px" href="/devices/{{ d.id }}#monitoring-health">Проблем: {{ health.issues|length }}</a>{% endif %}
       </td>
       <td>
         {% set a = arch_by_id.get(d.id) %}
         {% if a and a.total %}
-          {% set checked_archive = a.full + a.partial + a.none %}
-          <span class="dot {{ a.status if checked_archive else 'gray' }}" title="Полная запись: {{ a.full }} из {{ checked_archive }} проверенных; нет данных: {{ a.no_data }}"></span>
-          {% if checked_archive %}{{ a.full }}/{{ checked_archive }}{% else %}<span class="muted">не проверен</span>{% endif %}{% if a.none %} <span class="badge err">{{ a.none }}✖</span>{% elif a.partial %} <span class="badge warn">{{ a.partial }}!</span>{% endif %}
-          {% if a.no_data %}<div class="muted" style="font-size:12px">Нет данных: {{ a.no_data }}</div>{% endif %}
+          <span class="arch-mini" title="запись {{ a.full }}/{{ a.total }}{% if a.partial %}, частично {{ a.partial }}{% endif %}{% if a.none %}, без записи {{ a.none }}{% endif %}{% if a.no_data %}, нет данных {{ a.no_data }}{% endif %}">
+            <i style="width:{{ (a.full / a.total * 100) | round(1) }}%;background:var(--color-accent-400)"></i>
+            <i style="width:{{ (a.partial / a.total * 100) | round(1) }}%;background:repeating-linear-gradient(45deg,var(--color-accent-600) 0 2px,transparent 2px 5px)"></i>
+            <i style="width:{{ (a.none / a.total * 100) | round(1) }}%;background:var(--color-accent)"></i>
+          </span>{{ a.full }}/{{ a.total }}
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
     </tr>
@@ -157,7 +168,10 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 
+<div style="display:grid;grid-template-columns:7fr 5fr;gap:28px;align-items:start" class="dash-cols">
+<div>
 <h2>Последние события</h2>
 <table class="grid">
   <thead><tr><th>Время</th><th>Уровень</th><th>Сообщение</th></tr></thead>
@@ -165,7 +179,7 @@
   {% for e in events %}
     <tr>
       <td class="muted">{{ e.created_at | localtime('%d.%m %H:%M') }}</td>
-      <td><span class="badge {{ {'info':'ok','warning':'warn','critical':'err'}[e.severity] }}">{{ e.severity }}</span></td>
+      <td><span class="badge {{ {'info':'ok','warning':'warn','critical':'err'}[e.severity] }}">{{ {'info':'инфо','warning':'внимание','critical':'критично'}[e.severity] }}</span></td>
       <td>{{ e.message }}</td>
     </tr>
   {% else %}
@@ -173,10 +187,10 @@
   {% endfor %}
   </tbody>
 </table>
-
-<h2>💽 Заполнение HDD</h2>
-<div class="chart-card">
-  <div class="chart-head"><h3 class="muted" style="font-weight:600">% занято по объектам</h3><span class="sub">макс. диск на объекте</span></div>
+</div>
+<div>
+<h2>Заполнение HDD</h2>
+<div class="chart-card blueprint">{{ corners() }}
   <div class="barlist">
     {% for d in devices if d.hdds | selectattr('present') | list %}
       {% set use = (d.hdds | selectattr('present') | map(attribute='usage_percent') | max) | round | int %}
@@ -189,6 +203,9 @@
       <span class="muted">Нет данных о дисках.</span>
     {% endfor %}
   </div>
-  <p class="muted" style="font-size:12px;margin:12px 0 0">При циклической перезаписи заполненный диск — нормальное состояние. Готовность HDD и свежесть записи проверяются отдельно.</p>
+  <div class="muted" style="font-size:12px;margin-top:10px">Заполнение не считается неисправностью при циклической записи. Готовность HDD контролируется отдельно.</div>
 </div>
+</div>
+</div>
+<style>@media (max-width: 900px){ .dash-cols{grid-template-columns:1fr !important} }</style>
 {% endblock %}

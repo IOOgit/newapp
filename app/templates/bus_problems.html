@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Проблемы автобусов — печать{% endblock %}
+{% block content %}
+<style>
+  /* широкий рабочий лист — печатаем альбомно, чтобы колонка «Проблема» влезала целиком */
+  @media print { @page { size: A4 landscape; margin: 12mm; } }
+</style>
+<div class="bus-scope">
+  <a href="/buses" class="noprint" style="font-size:13px;font-weight:600;color:var(--color-accent-700)">← к автобусам</a>
+  <div class="page-head" style="margin-top:14px">
+    <div>
+      <div class="kicker" style="margin-bottom:8px">Автобусы · ручной учёт · без сети</div>
+      <h1>Проблемы автобусов</h1>
+    </div>
+    <div class="device-actions noprint">
+      <a class="bus-btn" href="/api/buses/problems.csv">Скачать CSV</a>
+      <button class="bus-btn primary" onclick="window.print()">Печать</button>
+    </div>
+  </div>
+  <div class="rule"></div>
+  <p class="muted" style="margin-top:10px">
+    Отмеченных проблем: <b>{{ rows|length }}</b> · лист сформирован {{ printed_at.strftime('%d.%m.%Y %H:%M') }}.
+    Графа «Отметка об устранении» — для рукописных пометок на распечатке.
+    «Раз» — сколько раз проблема отмечалась за всю историю (повторные — акцентом);
+    полная история — на странице автобуса.
+  </p>
+
+  {% if rows %}
+  <div class="table-wrap">
+  <table class="grid">
+    <thead><tr>
+      <th style="width:30px">№</th><th>Автобус</th><th>Маршрут</th><th>Модель DVR</th>
+      <th>Где стоит</th><th>Диск</th><th>Проблема</th>
+      <th style="width:60px" title="Сколько раз проблема отмечалась за всю историю">Раз</th>
+      <th style="width:180px">Отметка об устранении</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        <td><a href="/buses/{{ r.bus.id }}"><b>{{ r.bus.bus_number }}</b></a></td>
+        <td>{{ r.bus.route or '—' }}</td>
+        <td class="muted">{{ r.bus.dvr_model or '—' }}</td>
+        <td class="muted">{{ r.bus.location or '—' }}</td>
+        <td>
+          {% if r.disk %}{{ r.disk.label }} ({{ r.disk.type }}){% if r.bus.installed_since %} <span class="muted">· с {{ r.bus.installed_since | localtime('%d.%m') }}</span>{% endif %}
+          {% else %}<span class="badge err">нет диска</span>{% endif %}
+        </td>
+        <td>{{ r.bus.problem_note or 'проблема (без описания)' }}</td>
+        <td {% if r.times > 1 %}style="color:var(--color-accent);font-weight:700"{% endif %}>{{ r.times }}</td>
+        <td></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted" style="margin-top:18px">
+    Дата: ______________ &nbsp;&nbsp; Исполнитель: ____________________ &nbsp;&nbsp; Подпись: ______________
+  </p>
+  {% else %}
+  <div class="wl-empty blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>Проблем нет<div style="font-family:var(--font-body);font-size:14px;font-weight:400;letter-spacing:0;text-transform:none;margin-top:6px" class="muted">Ни на одном автобусе не отмечена проблема.</div></div>
+  {% endif %}
+
+  {% if chronic %}
+  <h2>Чаще всего болеют <span class="muted">проблема отмечалась 2+ раза за всю историю</span></h2>
+  <div class="table-wrap">
+  <table class="grid" style="max-width:760px">
+    <thead><tr>
+      <th>Автобус</th><th>Маршрут</th><th style="text-align:right">Раз отмечалась</th>
+      <th>Последняя</th><th>Сейчас</th>
+    </tr></thead>
+    <tbody>
+    {% for r in chronic %}
+      <tr>
+        <td><a href="/buses/{{ r.bus.id }}"><b>{{ r.bus.bus_number }}</b></a></td>
+        <td>{{ r.bus.route or '—' }}</td>
+        <td style="text-align:right;color:var(--color-accent);font-weight:700">{{ r.times }}</td>
+        <td class="muted">{{ r.last | localtime('%d.%m.%Y') }}</td>
+        <td>{% if r.open %}<span class="badge err">открыта</span>{% else %}<span class="badge ok">снята</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

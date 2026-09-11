@@ -62,7 +62,7 @@ async def test_dashboard_counts_monitored_channels_and_neutral_disk_occupancy(db
     assert "1 под контролем" in body
     assert "<td>1/1</td>" in body
     assert "аптайм парка" not in body
-    disks = body.split("💽 Заполнение HDD", 1)[1]
+    disks = body.split("Заполнение HDD", 1)[1]
     assert "100%" in disks
     assert 'class="bar err"' not in disks and 'class="bar warn"' not in disks
 

@@ -4,15 +4,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Вход — NVR Monitor</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=18">
 </head>
 <body>
 <div class="login-wrap">
-  <form class="login-card" method="post" action="/login">
-    <h2>📹 NVR Monitor</h2>
+  <form class="login-card blueprint" method="post" action="/login">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class="login-brand"><span class="brand-sq"></span><span class="brand-name">NVR MONITOR</span></div>
+    <div class="login-sub">панель централизованного мониторинга</div>
     {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
-    <label>Логин<input name="username" autofocus autocomplete="username"></label>
-    <label>Пароль<input name="password" type="password" required></label>
+    <label>Логин<input name="username" autofocus autocomplete="username" placeholder="admin"></label>
+    <label>Пароль<input name="password" type="password" required placeholder="••••••••"></label>
     <button type="submit">Войти</button>
   </form>
 </div>

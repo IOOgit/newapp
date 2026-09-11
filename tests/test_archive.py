@@ -85,6 +85,6 @@ async def test_archive_overview_and_dashboard(db):
         assert dev["full"] == 1 and dev["partial"] == 1 and dev["none"] == 1
         assert dev["status"] == "red"          # есть канал без записи
         assert ov["totals"]["none"] >= 1
-        # дашборд и TV рендерятся с архивом
-        assert "Архив записи" in (await c.get("/")).text
+        # дашборд и TV рендерятся с архивом (KPI-панель «Покрытие архива»)
+        assert "Покрытие архива" in (await c.get("/")).text
         assert (await c.get("/tv")).status_code == 200

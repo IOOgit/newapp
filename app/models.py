@@ -511,6 +511,25 @@ class Asset(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class BusProblemLog(Base):
+    """История отмеченных проблем по автобусам.
+
+    Запись открывается при пометке «проблема» и закрывается при её снятии
+    (или при смене формулировки — тогда открывается новая). Даёт динамику:
+    сколько раз и как долго автобус был проблемным.
+    """
+
+    __tablename__ = "bus_problem_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bus_id: Mapped[int] = mapped_column(Integer, index=True)
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+    opened_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    opened_by: Mapped[str | None] = mapped_column(String(64), default=None)
+    closed_by: Mapped[str | None] = mapped_column(String(64), default=None)
+
+
 class SwapLog(Base):
     """Журнал замен дисков по автобусам."""
 

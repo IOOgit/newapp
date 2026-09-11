@@ -1,17 +1,19 @@
 {% extends "base.html" %}
 {% block title %}История — NVR Monitor{% endblock %}
 {% block content %}
-<div class="device-head">
+<div class="kicker">Мониторинг · инциденты и потери записи</div>
+<div class="page-head">
   <h1>История за {{ days }} дней</h1>
   <div class="device-actions">
-    <button onclick="location.href='/api/events/export.csv'">⬇ Экспорт CSV</button>
+    <button onclick="location.href='/api/events/export.csv'">Экспорт CSV</button>
   </div>
 </div>
+<div class="rule"></div>
 
 <h2>Инциденты по дням</h2>
-<div class="chart">
+<div class="chart blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
   {% for label, count in by_day %}
-    <div class="chart-col" title="{{ label }}: {{ count }}">
+    <div class="chart-col {{ 'peak' if count >= 6 else '' }}" title="{{ label }}: {{ count }}">
       <div class="chart-bar" style="height: {{ (count / max_day * 100)|round(0, 'floor') }}%"></div>
       <div class="chart-x">{{ label }}</div>
     </div>
@@ -44,8 +46,9 @@
   </tbody>
 </table>
 
-<h2>Heatmap аптайма (инциденты по дням)</h2>
+<h2>Heatmap аптайма <span class="muted">инциденты · камера × день</span></h2>
 {% if heatmap %}
+<div class="blueprint" style="padding:14px 16px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
 <div class="calendar-wrap">
 <table class="calendar">
   <thead><tr><th>Камера</th>
@@ -65,10 +68,11 @@
 </table>
 </div>
 <div class="legend">
-  <span class="cal hm0"></span> ок
+  <span class="cal hm0"></span> 0
   <span class="cal hm1"></span> 1
   <span class="cal hm2"></span> 2–3
   <span class="cal hm3"></span> 4+
+</div>
 </div>
 {% else %}<p class="muted">Инцидентов по камерам за период нет 🎉</p>{% endif %}
 
@@ -79,7 +83,7 @@
   {% for e in events %}
     <tr>
       <td class="muted">{{ e.created_at | localtime('%d.%m %H:%M') }}</td>
-      <td><span class="badge {{ {'info':'ok','warning':'warn','critical':'err'}[e.severity] }}">{{ e.severity }}</span></td>
+      <td><span class="badge {{ {'info':'ok','warning':'warn','critical':'err'}[e.severity] }}">{{ {'info':'инфо','warning':'внимание','critical':'критично'}[e.severity] }}</span></td>
       <td>{{ e.message }}</td>
     </tr>
   {% else %}<tr><td colspan="3" class="muted">Событий нет.</td></tr>{% endfor %}

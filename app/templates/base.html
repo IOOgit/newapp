@@ -4,50 +4,50 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{% block title %}NVR Monitor{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css?v=14">
+    <link rel="stylesheet" href="/static/style.css?v=19">
     <link rel="manifest" href="/manifest.webmanifest">
-    <meta name="theme-color" content="#1FB6A6">
+    <meta name="theme-color" content="#5980a6">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Автобусы">
     <link rel="apple-touch-icon" href="/static/icons/apple-touch.png">
     <link rel="icon" href="/static/icons/favicon-32.png">
 </head>
 <body>
+{% set _owner = request.session.get('is_owner') %}
+{% set _caps = request.session.get('caps', []) %}
+{% set _mon = _owner or 'monitoring' in _caps %}
 <header class="topbar">
-    <a href="/" class="logo">📹 NVR Monitor <span class="ver" title="Версия приложения">v{{ app_version }}</span></a>
-    {% set _owner = request.session.get('is_owner') %}
-    {% set _caps = request.session.get('caps', []) %}
-    {% set _mon = _owner or 'monitoring' in _caps %}
+    <a href="/" class="brand"><span class="brand-sq"></span><span class="brand-name">NVR MONITOR</span>
+      <span class="brand-sub" title="Версия приложения">v{{ app_version }}</span></a>
     <nav>
+        {% if _mon %}<a href="/" data-nav="/">Дашборд</a>{% endif %}
+        {% if _owner or 'worklist' in _caps %}<a href="/worklist" data-nav="/worklist">Доска проблем<span class="nav-count" id="nav-wl-count"></span></a>{% endif %}
         {% if _mon %}
-        <a href="/">Дашборд</a>
+        <a href="/tv" data-nav="/tv">TV-режим</a>
+        <a href="/switches" data-nav="/switches">Свитчи</a>
+        <a href="/history" data-nav="/history">История</a>
+        <a href="/plan" data-nav="/plan">План</a>
+        <a href="/firmware" data-nav="/firmware">Прошивки</a>
+        <a href="/calc" data-nav="/calc">Хранилище</a>
         {% endif %}
-        {% if _owner or 'worklist' in _caps %}<a href="/worklist" class="nav-worklist">🛠 Доска проблем</a>{% endif %}
-        {% if _mon %}
-        <a href="/tv">TV</a>
-        <a href="/switches">Свитчи</a>
-        <a href="/history">История</a>
-        <a href="/plan">План</a>
-        <a href="/firmware">Прошивки</a>
-        <a href="/calc">Хранилище</a>
+        {% if _owner or 'checkin' in _caps %}<a href="/checkin" data-nav="/checkin">Заселения</a>{% endif %}
+        {% if _owner or 'buses' in _caps %}
+        <a href="/buses" data-nav="/buses">Автобусы</a>
+        <a href="/disks" data-nav="/disks">Диски</a>
         {% endif %}
-        {% if _owner or 'audit' in _caps %}<a href="/audit">Аудит</a>{% endif %}
-        {% if _owner or 'checkin' in _caps %}<a href="/checkin" class="nav-checkin">🏨 Заселения</a>{% endif %}
-        {% if _owner %}<a href="/users">Пользователи</a>{% endif %}
-        {% if _owner or 'backup' in _caps %}<a href="/backup">Бэкап</a>{% endif %}
-        {% if _owner or 'buses' in _caps %}<a href="/buses" class="nav-bus">🚌 Автобусы</a>{% endif %}
-        {% if _mon %}
-        <a href="#" id="add-device-btn">+ Устройство</a>
-        <a href="#" id="bell" title="Системные уведомления">🔕</a>
-        {% endif %}
-        <a href="/logout">Выход</a>
+        {% if _owner %}<a href="/users" data-nav="/users">Пользователи</a>{% endif %}
+        {% if _owner or 'audit' in _caps %}<a href="/audit" data-nav="/audit">Аудит</a>{% endif %}
+        {% if _owner or 'backup' in _caps %}<a href="/backup" data-nav="/backup">Бэкап</a>{% endif %}
     </nav>
-    <!-- Кнопка смены адреса сервера — видна только в нативном приложении -->
-    <a href="https://localhost/" id="app-server-btn"
-       title="Сменить адрес сервера"
-       style="display:none;font-size:20px;margin-left:12px">⚙</a>
+    <div class="topbar-user">
+        {% if _mon %}<a href="#" id="bell-link" title="Системные уведомления"><span id="bell">🔕</span></a>{% endif %}
+        <span class="duty-sub">{{ request.session.get('user') or 'admin' }}{% if _owner %} · владелец{% endif %}</span>
+        <!-- Кнопка смены адреса сервера — видна только в нативном приложении -->
+        <a href="https://localhost/" id="app-server-btn" title="Сменить адрес сервера" style="display:none">⚙</a>
+        <a href="/logout">Выход</a>
+    </div>
 </header>
 <main class="container">
     {% block content %}{% endblock %}
@@ -96,14 +96,14 @@
 <!-- Нижняя панель-вкладки (телефон): быстрый доступ к движухе по автобусам -->
 <nav class="tabbar">
   <a href="/buses" data-path="/buses"><span class="ic">🚌</span>Автобусы</a>
-  <a href="/buses/collection" data-path="/buses/collection"><span class="ic">📅</span>Сбор</a>
-  <a href="/buses/review" data-path="/buses/review"><span class="ic">🔎</span>Очередь</a>
+  <a href="/buses/problems" data-path="/buses/problems"><span class="ic">🛠</span>Проблемы</a>
   <a href="/disks" data-path="/disks"><span class="ic">💿</span>Диски</a>
   <a href="/logout"><span class="ic">🚪</span>Выход</a>
 </nav>
 
-<script src="/static/app.js?v=7"></script>
-<script src="/static/notify.js?v=7"></script>
+<script src="/static/app.js?v=9"></script>
+<script src="/static/notify.js?v=8"></script>
+{% if _mon %}<script src="/static/iso.js?v=1"></script>{% endif %}
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   // Кнопка "⚙ Сервер" — только в нативной оболочке (метка в User-Agent)
@@ -111,10 +111,29 @@
     const b = document.getElementById("app-server-btn");
     if (b) b.style.display = "inline-block";
   }
-  // подсветка активной вкладки
+  // подсветка активной вкладки (низ, телефон)
   document.querySelectorAll(".tabbar a[data-path]").forEach((a) => {
     if (location.pathname === a.dataset.path || (a.dataset.path !== "/buses" && location.pathname.startsWith(a.dataset.path))) a.classList.add("active");
   });
+  // клик по всему пункту «Уведомления» — как клик по колокольчику (notify.js вешает обработчик на span)
+  (() => {
+    const link = document.getElementById("bell-link"), span = document.getElementById("bell");
+    if (link && span) link.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (e.target !== span) span.click();
+    });
+  })();
+  // активный пункт верхней навигации: точное совпадение или самый длинный префикс
+  (() => {
+    const links = [...document.querySelectorAll(".topbar nav a[data-nav]")];
+    let best = null;
+    for (const a of links) {
+      const p = a.dataset.nav;
+      const hit = p === "/" ? location.pathname === "/" : location.pathname.startsWith(p);
+      if (hit && (!best || p.length > best.dataset.nav.length)) best = a;
+    }
+    if (best) best.classList.add("active");
+  })();
 </script>
 {% block scripts %}{% endblock %}
 </body>

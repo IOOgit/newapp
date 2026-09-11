@@ -1,57 +1,59 @@
 {% extends "base.html" %}
 {% block title %}Автобусы — ручной учёт{% endblock %}
 {% block content %}
-{% set cm = {'green':'green','yellow':'yellow','orange':'orange','red':'red'} %}
 {% macro bcard(r) %}
-  <a class="bcard b-{{ r.color }}" href="/buses/{{ r.bus.id }}">
-    <div class="bcard-top">
-      <span class="dot {{ cm[r.color] }}"></span>
-      <span class="bcard-num">{{ r.bus.bus_number }}</span>
-      <span class="bcard-route">марш. {{ r.bus.route or '—' }}</span>
+  {# карточка: номер, закреплённые диски, проблема + кнопка отметки прямо здесь #}
+  <div class="bcard blueprint b-{{ r.color }}">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class="bcard-head">
+      <div style="min-width:0">
+        <a class="bcard-num" href="/buses/{{ r.bus.id }}">{{ r.bus.bus_number }}</a>
+        <div class="bcard-route">Маршрут {{ r.bus.route or '—' }}</div>
+      </div>
+      {% if r.bus.has_problem %}<span class="badge err" style="flex:none">проблема{% if r.times > 1 %} · {{ r.times }}-й{% endif %}</span>
+      {% elif not r.assigned %}<span class="badge warn" style="flex:none">нет дисков</span>
+      {% else %}<span class="badge ok" style="flex:none">норма</span>{% endif %}
     </div>
-    <div class="bcard-disk">
-      {% if r.disk %}💿 <b>{{ r.disk.label }}</b> <span class="muted">({{ r.disk.type }})</span>
-        {% if r.bus.installed_since %}<span class="muted"> · с {{ r.bus.installed_since | localtime('%d.%m') }}</span>{% endif %}
-      {% else %}<span class="badge err">нет диска</span>{% endif %}
+    <div class="bcard-cap">Закреплённые диски</div>
+    <div class="bcard-disks">
+      {% for d in r.assigned %}
+        <a class="dchip {{ 'bad' if d.status == 'faulty' else '' }}" href="/disks/{{ d.id }}/passport"
+           title="{{ d.type }}{% if d.capacity_gb %} · {{ d.capacity_gb }} ГБ{% endif %}{% if d.status == 'faulty' %} · неисправен{% endif %}">{{ d.label }}</a>
+      {% else %}<span class="muted" style="font-size:13px">не закреплены</span>{% endfor %}
     </div>
-    <div class="bcard-reason">{{ r.reason }}</div>
-  </a>
-{% endmacro %}
-<div class="bus-scope">
-  <div class="bus-banner">
-    <div><span class="bus-ico">🚌</span> <b>Автобусы</b>
-      <span class="badge-offline">OFFLINE · Ручной учёт</span></div>
-    <div>
-      <a class="bus-btn" href="/buses/collection">📅 День сбора</a>
-      <a class="bus-btn" href="/buses/plan">🗓 План</a>
-      <a class="bus-btn" href="/buses/review">🔎 Очередь</a>
-      <a class="bus-btn" href="/disks">Реестр дисков</a>
-      <a class="bus-btn" href="/assets">📦 Склад</a>
-      <a class="bus-btn" href="/buses/swaplog">Журнал</a>
-      <a class="bus-btn" href="/buses/stats">📊 Статистика</a>
-      <button class="bus-btn" onclick="addBus()">+ Автобус</button>
+    {% if r.bus.has_problem %}
+      <div class="bcard-reason">{{ r.bus.problem_note or 'проблема (без описания)' }}</div>
+    {% endif %}
+    <div class="bcard-foot">
+      {% if r.bus.has_problem %}
+        <button class="mini" onclick='markProblem({{ r.bus.id }}, true, {{ (r.bus.problem_note or "") | tojson }})'>изменить</button>
+        <button class="mini" onclick="clearProblem({{ r.bus.id }})">снять проблему</button>
+      {% else %}
+        <button class="mini" onclick='markProblem({{ r.bus.id }}, false, "")'>отметить проблему</button>
+      {% endif %}
+      <a class="bcard-open" href="/buses/{{ r.bus.id }}">карточка →</a>
     </div>
   </div>
-  <p class="muted">С этих регистраторов нет связи — статусы вносятся вручную.</p>
+{% endmacro %}
+<div class="bus-scope">
+  <div class="kicker">Ручной учёт · без сети</div>
+  <div class="page-head">
+    <h1>Автобусы <span class="badge-offline">offline</span></h1>
+    <div class="device-actions">
+      <a class="bus-btn" href="/disks">Реестр дисков</a>
+      <a class="bus-btn" href="/buses/problems">Проблемы</a>
+      <a class="bus-btn" href="/buses/analytics">Аналитика</a>
+      <button class="bus-btn primary" onclick="addBus()">+ Автобус</button>
+    </div>
+  </div>
+  <div class="rule"></div>
 
   <section class="bus-summary">
     <div class="bus-tile"><span class="num">{{ summary.buses }}</span><span>автобусов</span></div>
-    <div class="bus-tile {{ 'bad' if summary.no_disk else '' }}"><span class="num">{{ summary.no_disk }}</span><span>без диска</span></div>
-    {% if summary.overdue %}<div class="bus-tile warn"><span class="num">{{ summary.overdue }}</span><span>пора менять диск</span></div>{% endif %}
-    <div class="bus-tile"><span class="num">{{ summary.disk_ready }}</span><span>дисков в резерве</span></div>
-    <a class="bus-tile {{ 'warn' if summary.disk_review else '' }}" href="/buses/review" style="text-decoration:none;color:inherit"><span class="num">{{ summary.disk_review }}</span><span>на просмотре →</span></a>
-    <div class="bus-tile {{ 'bad' if summary.disk_faulty else '' }}"><span class="num">{{ summary.disk_faulty }}</span><span>неисправных</span></div>
+    <div class="bus-tile {{ 'bad' if summary.problems else '' }}"><span class="num">{{ summary.problems }}</span><span>с проблемами</span></div>
+    <div class="bus-tile {{ 'warn' if summary.no_assigned else '' }}"><span class="num">{{ summary.no_assigned }}</span><span>без закреплённых дисков</span></div>
+    <div class="bus-tile"><span class="num">{{ summary.disks_assigned }}</span><span>дисков закреплено</span></div>
   </section>
-
-  {% if attention or stale_disks %}
-  <div class="attention">
-    <h3>⚠️ Требует внимания</h3>
-    <ul>
-      {% for a in attention %}<li><a href="/buses/{{ a.bus.id }}">Автобус {{ a.bus.bus_number }}</a> — {{ a.reason }}</li>{% endfor %}
-      {% for d in stale_disks %}<li>Диск <b>{{ d.label }}</b> давно на просмотре — пора просмотреть/подготовить</li>{% endfor %}
-    </ul>
-  </div>
-  {% endif %}
 
   <div class="bus-search">
     <form method="get" style="display:flex;gap:8px;flex:1">
@@ -64,21 +66,13 @@
       </select>
       <button class="bus-btn">Найти</button>
     </form>
-    <details class="bus-settings">
-      <summary class="bus-btn" style="list-style:none">⚙ Пороги</summary>
-      <div class="bus-settings-body">
-        <label>Менять диск через, дней <input id="set-swap" type="number" min="1" value="{{ swap_days }}"></label>
-        <label>Просмотр диска в течение, дней <input id="set-review" type="number" min="1" value="{{ review_days }}"></label>
-        <button class="bus-btn" onclick="saveThresholds()">Сохранить</button>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">Напоминание «пора менять» включается отдельно на странице каждого автобуса.</p>
-      </div>
-    </details>
   </div>
 
   <div class="blist">
     {% if grouped %}
       {% for label, items in grouped %}
-        <div class="bgroup">🚏 Маршрут {{ label }} <span class="muted">({{ items|length }})</span></div>
+        {% set bad = items | selectattr('bus.has_problem') | list | length %}
+        <div class="bgroup">🚏 Маршрут {{ label }} <span class="muted" style="font-family:var(--font-body);font-size:12.5px;font-weight:400;letter-spacing:0;text-transform:none">{{ items|length }} авт. · {{ (bad ~ ' с проблемами') if bad else 'все в норме' }}</span></div>
         {% for r in items %}{{ bcard(r) }}{% endfor %}
       {% endfor %}
     {% else %}
@@ -97,11 +91,17 @@ async function addBus() {
     body: JSON.stringify({ bus_number: num, route }) });
   if (r.ok) location.reload(); else alert("Ошибка: " + (await r.text()));
 }
-async function saveThresholds() {
-  const swap_days = parseInt(document.getElementById("set-swap").value, 10);
-  const review_days = parseInt(document.getElementById("set-review").value, 10);
-  const r = await fetch("/api/buses/settings", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ swap_days, review_days }) });
+async function markProblem(id, has, cur) {
+  const note = prompt("Описание проблемы (что с камерами/регистратором):", cur || "");
+  if (note === null || !note.trim()) return;
+  const r = await fetch(`/api/buses/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ has_problem: true, problem_note: note.trim() }) });
+  if (r.ok) location.reload(); else alert("Ошибка: " + (await r.text()));
+}
+async function clearProblem(id) {
+  if (!confirm("Снять проблему? Она закроется в истории автобуса.")) return;
+  const r = await fetch(`/api/buses/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ has_problem: false, problem_note: null }) });
   if (r.ok) location.reload(); else alert("Ошибка: " + (await r.text()));
 }
 </script>

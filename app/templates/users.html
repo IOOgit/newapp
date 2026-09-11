@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Пользователи{% endblock %}
 {% block content %}
-<h1>👤 Пользователи и доступ</h1>
-<p class="muted">Владелец видит все вкладки и управляет учётками. Остальным выдаются конкретные вкладки — пользователь видит в меню и открывает только выданное.</p>
+<div class="kicker">Администрирование · доступ по вкладкам</div>
+<h1>Пользователи</h1>
+<div class="rule"></div>
+<p class="muted" style="margin-top:10px">Владелец видит все вкладки и управляет учётками. Остальным выдаются конкретные вкладки — пользователь видит в меню и открывает только выданное.</p>
 
 <!-- Создание -->
-<div class="chart-card" style="margin-bottom:16px; max-width:760px">
-  <h3 style="margin-top:0">Новый пользователь</h3>
+<div class="chart-card blueprint" style="margin:24px 0 16px; max-width:760px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+  <div class="kicker" style="margin-bottom:12px">Новый пользователь</div>
   <div class="collect-controls">
     <input id="u-name" placeholder="Логин" style="width:160px">
     <input id="u-display" placeholder="Имя (необяз.)" style="width:180px">
@@ -25,6 +27,7 @@
 </div>
 
 <!-- Список -->
+<div class="table-wrap">
 <table class="grid">
   <thead><tr><th>Логин</th><th>Имя</th><th>Доступ</th><th>Статус</th><th>Последний вход</th><th></th></tr></thead>
   <tbody>
@@ -64,6 +67,7 @@
   {% else %}<tr><td colspan="6" class="muted">Пользователей нет.</td></tr>{% endfor %}
   </tbody>
 </table>
+</div>
 
 <script>
 function capsFrom(sel){ return [...document.querySelectorAll(sel)].filter(x=>x.checked).map(x=>x.value); }

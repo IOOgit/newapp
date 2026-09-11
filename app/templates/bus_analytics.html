@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Аналитика проблем — автобусы{% endblock %}
+{% block content %}
+{% macro corners() %}<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>{% endmacro %}
+<div class="bus-scope">
+  <a href="/buses" style="font-size:13px;font-weight:600;color:var(--color-accent-700)">← к автобусам</a>
+  <div class="page-head" style="margin-top:14px">
+    <div>
+      <div class="kicker" style="margin-bottom:8px">Автобусы · динамика проблем</div>
+      <h1>Аналитика проблем</h1>
+    </div>
+    <div class="device-actions">
+      <a class="bus-btn" href="/buses/problems">Печатный лист</a>
+      <button class="bus-btn" onclick="window.print()">Печать</button>
+    </div>
+  </div>
+  <div class="rule"></div>
+
+  <section class="bus-summary">
+    <div class="bus-tile"><span class="num">{{ totals.total }}</span><span>пометок за всю историю</span></div>
+    <div class="bus-tile"><span class="num">{{ totals.last30 }}</span><span>за 30 дней</span></div>
+    <div class="bus-tile {{ 'bad' if totals.open else '' }}"><span class="num">{{ totals.open }}</span><span>открыто сейчас</span></div>
+    <div class="bus-tile"><span class="num">{{ totals.avg_fix if totals.avg_fix is not none else '—' }}</span><span>среднее устранение, дн</span></div>
+  </section>
+
+  {% if totals.total %}
+  <div style="display:grid;grid-template-columns:5fr 7fr;gap:28px;margin-top:26px;align-items:start" class="an-cols">
+    <div>
+      <h2 style="margin-top:0">По маршрутам <span class="muted">где болит чаще</span></h2>
+      <div class="chart-card blueprint">{{ corners() }}
+        <div class="barlist">
+          {% for r in routes %}
+          <div class="bar {{ 'err' if loop.first and r.total > 1 else '' }}">
+            <span class="bar-label"><b>марш. {{ r.route }}</b> <span class="muted">· {{ r.buses }} авт.</span></span>
+            <span class="bar-track"><i class="bar-fill" style="--p:{{ r.pct }}"></i></span>
+            <span class="bar-val">{{ r.total }}{% if r.open %} <span title="открыто сейчас" style="color:var(--color-accent-700)">({{ r.open }})</span>{% endif %}</span>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:10px">Число — пометок за всю историю; в скобках — открыто сейчас. Верхний маршрут — акцентом.</div>
+      </div>
+    </div>
+    <div>
+      <h2 style="margin-top:0">По месяцам <span class="muted">как часто отмечали · 12 мес</span></h2>
+      <div class="chart blueprint" style="height:180px">{{ corners() }}
+        {% set mx = months | map(attribute='count') | max %}
+        {% for m in months %}
+        <div class="chart-col {{ 'peak' if mx and m.count == mx and m.count > 0 else '' }}" title="{{ m.label }}: {{ m.count }}">
+          <div style="font-size:11px;text-align:center;font-feature-settings:'tnum' 1;margin-bottom:3px;color:color-mix(in srgb,var(--color-text) 82%,transparent)">{{ m.count if m.count else '' }}</div>
+          <div class="chart-bar" style="height:{{ [m.pct, 2] | max }}%"></div>
+          <div class="chart-x">{{ m.label }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <style>@media (max-width: 900px){ .an-cols{grid-template-columns:1fr !important} }</style>
+
+  {% if chronic %}
+  <h2>Чаще всего болеют <span class="muted">2+ пометки за историю</span></h2>
+  <div class="table-wrap">
+  <table class="grid" style="max-width:760px">
+    <thead><tr>
+      <th>Автобус</th><th>Маршрут</th><th style="text-align:right">Раз</th><th>Последняя</th><th>Сейчас</th>
+    </tr></thead>
+    <tbody>
+    {% for r in chronic %}
+      <tr>
+        <td><a href="/buses/{{ r.bus.id }}"><b>{{ r.bus.bus_number }}</b></a></td>
+        <td>{{ r.bus.route or '—' }}</td>
+        <td style="text-align:right;color:var(--color-accent);font-weight:700">{{ r.times }}</td>
+        <td class="muted">{{ r.last | localtime('%d.%m.%Y') }}</td>
+        <td>{% if r.open %}<span class="badge err">открыта</span>{% else %}<span class="badge ok">снята</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% else %}
+  <div class="wl-empty blueprint" style="margin-top:22px">{{ corners() }}Данных пока нет<div style="font-family:var(--font-body);font-size:14px;font-weight:400;letter-spacing:0;text-transform:none;margin-top:6px" class="muted">История копится с каждой пометкой проблемы — аналитика появится сама.</div></div>
+  {% endif %}
+</div>
+{% endblock %}
