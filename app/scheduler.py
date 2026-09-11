@@ -8,7 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
-from app.services import archive, backup, poller, quality, watchdog
+from app.services import archive, backup, poller, quality, recording, switches, watchdog
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,20 @@ def start_scheduler() -> None:
             coalesce=True,
             replace_existing=True,
         )
+
+    if settings.recording_check_minutes > 0:
+        scheduler.add_job(
+            recording.check_recording_all,
+            trigger=IntervalTrigger(minutes=settings.recording_check_minutes),
+            id="recording_check", name="Свежесть записи NVR",
+            max_instances=1, coalesce=True, replace_existing=True,
+        )
+    scheduler.add_job(
+        switches.poll_all_switches,
+        trigger=IntervalTrigger(seconds=settings.switch_poll_seconds),
+        id="switch_poll", name="SNMP мониторинг коммутаторов",
+        max_instances=1, coalesce=True, replace_existing=True,
+    )
 
     if settings.watchdog_url:
         scheduler.add_job(

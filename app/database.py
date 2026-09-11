@@ -44,6 +44,15 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 # Лёгкие миграции: новые колонки, которые create_all НЕ добавит к уже
 # существующим таблицам. (table, column, DDL-тип). Без Alembic для простоты.
 _NEW_COLUMNS = [
+    ("devices", "monitoring_checks", "JSON DEFAULT '{}'"),
+    ("hdds", "raw_status", "VARCHAR(128)"),
+    ("hdds", "present", "BOOLEAN DEFAULT TRUE"),
+    ("channels", "recording_mode", "VARCHAR(16) DEFAULT 'continuous'"),
+    ("channels", "recording_status", "VARCHAR(16) DEFAULT 'unknown'"),
+    ("channels", "recording_checked_at", "TIMESTAMP"),
+    ("channels", "recording_last_end", "TIMESTAMP"),
+    ("channels", "recording_age_seconds", "INTEGER"),
+    ("channels", "recording_error", "TEXT"),
     ("devices", "cpu_load", "FLOAT"),
     ("devices", "memory_usage", "FLOAT"),
     ("devices", "temperature", "FLOAT"),

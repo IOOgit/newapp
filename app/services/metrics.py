@@ -23,6 +23,8 @@ async def render_metrics(session: AsyncSession) -> str:
     from app.services import poller  # избегаем циклического импорта
 
     devices = await list_devices(session)
+    from app.services.health import get_health_map
+    health_map = await get_health_map(session, devices)
     alerts = (
         await session.execute(select(AlertState).where(AlertState.active.is_(True)))
     ).scalars().all()
@@ -41,7 +43,7 @@ async def render_metrics(session: AsyncSession) -> str:
     ch_total = ch_online = ch_offline = ch_novideo = ch_problem = 0
     hdd_total = hdd_ok = hdd_error = hdd_nodisk = 0
     quality_counts: dict[str, int] = {}
-    problem_devices = 0
+    problem_devices = sum(1 for d in devices if d.enabled and health_map[d.id]["color"] in ("red", "yellow"))
 
     for d in devices:
         lbl = f'device="{_esc(d.name)}",host="{_esc(d.host)}"'
@@ -52,8 +54,6 @@ async def render_metrics(session: AsyncSession) -> str:
         c_problem = c_off + c_nv
         ch_total += c_total; ch_online += c_online
         ch_offline += c_off; ch_novideo += c_nv; ch_problem += c_problem
-        if d.enabled and (not d.reachable or c_problem):
-            problem_devices += 1
 
         add("nvrmon_device_reachable", 1 if d.reachable else 0, lbl)
         if d.latitude is not None and d.longitude is not None:
@@ -86,7 +86,7 @@ async def render_metrics(session: AsyncSession) -> str:
             hdd_total += 1
             if h.status == HddState.OK:
                 hdd_ok += 1
-            elif h.status == HddState.ERROR:
+            elif h.status in (HddState.ERROR, HddState.UNFORMATTED, HddState.READ_ONLY, HddState.MISSING):
                 hdd_error += 1
             elif h.status == HddState.NO_DISK:
                 hdd_nodisk += 1

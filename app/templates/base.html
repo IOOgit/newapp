@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{% block title %}NVR Monitor{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css?v=18">
+    <link rel="stylesheet" href="/static/style.css?v=19">
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#5980a6">
     <meta name="mobile-web-app-capable" content="yes">
@@ -26,6 +26,7 @@
         {% if _owner or 'worklist' in _caps %}<a href="/worklist" data-nav="/worklist">Доска проблем<span class="nav-count" id="nav-wl-count"></span></a>{% endif %}
         {% if _mon %}
         <a href="/tv" data-nav="/tv">TV-режим</a>
+        <a href="/switches" data-nav="/switches">Свитчи</a>
         <a href="/history" data-nav="/history">История</a>
         <a href="/plan" data-nav="/plan">План</a>
         <a href="/firmware" data-nav="/firmware">Прошивки</a>
@@ -100,7 +101,7 @@
   <a href="/logout"><span class="ic">🚪</span>Выход</a>
 </nav>
 
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=9"></script>
 <script src="/static/notify.js?v=8"></script>
 {% if _mon %}<script src="/static/iso.js?v=1"></script>{% endif %}
 <script>

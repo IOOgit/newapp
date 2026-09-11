@@ -23,6 +23,7 @@ from app.drivers.base import (
     HddInfo,
     HealthInfo,
     NVRClient,
+    NVRError,
 )
 from app.models import ApiType, HddState
 
@@ -155,29 +156,53 @@ class HikvisionClient(NVRClient):
     # ── HDD ───────────────────────────────────────────────────────────────────
     async def get_hdd_info(self) -> list[HddInfo]:
         resp = await self._request("GET", "/ISAPI/ContentMgmt/Storage/hdd")
-        if resp.status_code != 200:
+        if resp.status_code in (404, 405, 501):
             raise FeatureUnavailable(f"hdd: HTTP {resp.status_code}")
-        root = _strip_ns(_body(resp))
+        if resp.status_code != 200:
+            raise NVRError(f"hdd: HTTP {resp.status_code}")
+        try:
+            root = _strip_ns(_body(resp))
+        except ET.ParseError as exc:
+            raise NVRError("HDD: некорректный XML, состав дисков не подтверждён") from exc
+        if root.tag != "hddList" and root.find(".//hddList") is None:
+            raise NVRError("HDD: в ответе отсутствует полный список hddList")
         hdds: list[HddInfo] = []
+        seen: set[str] = set()
         for hdd in root.findall(".//hdd"):
-            hid = _text(hdd, "id") or "0"
-            raw_status = (_text(hdd, "status") or "").lower()
-            cap = int(_text(hdd, "capacity") or 0)        # МБ
-            free = int(_text(hdd, "freeSpace") or 0)       # МБ
-            if raw_status in ("ok", "normal", "unformatted"):
-                status = HddState.OK
-            elif raw_status in ("error", "failed", "smartfailed"):
+            hid = _text(hdd, "id")
+            if not hid or hid in seen:
+                raise NVRError("HDD: отсутствующий или повторный ID диска")
+            seen.add(hid)
+            raw_status = _text(hdd, "status") or ""
+            state = raw_status.lower().replace("-", "").replace("_", "").replace(" ", "")
+            prop = (_text(hdd, "property") or _text(hdd, "hddProperty") or "")
+            access = prop.lower().replace("-", "").replace("_", "").replace(" ", "")
+            try:
+                cap = int(_text(hdd, "capacity"))  # МБ
+                free = int(_text(hdd, "freeSpace") or 0)
+                if cap < 0 or free < 0 or free > cap:
+                    raise ValueError
+            except (TypeError, ValueError) as exc:
+                raise NVRError(f"HDD {hid}: некорректный объём, состав дисков не подтверждён") from exc
+            if state in ("error", "failed", "smartfailed", "abnormal"):
                 status = HddState.ERROR
-            elif raw_status in ("", "idle") and cap == 0:
+            elif state in ("unformatted", "uninitialized", "notformatted"):
+                status = HddState.UNFORMATTED
+            elif state in ("readonly", "ro") or access in ("readonly", "ro") or (_text(hdd, "readOnly") or "").lower() == "true":
+                status = HddState.READ_ONLY
+            elif state in ("nodisk", "notexist", "absent") or (state in ("", "idle") and cap == 0):
                 status = HddState.NO_DISK
-            else:
+            elif state in ("ok", "normal") and cap > 0:
                 status = HddState.OK
+            else:
+                status = HddState.UNKNOWN
             hdds.append(
                 HddInfo(hdd_id=hid, name=_text(hdd, "hddName"),
-                        capacity_mb=cap, free_mb=free, status=status)
+                        capacity_mb=cap, free_mb=free, status=status,
+                        raw_status=f"{raw_status}; property={prop}" if prop else raw_status or None)
             )
-        if not hdds:
-            raise FeatureUnavailable("список HDD пуст")
+        # Валидный пустой hddList — подтверждённое отсутствие дисков, а не
+        # неподдерживаемая возможность. Только такой ответ позволяет пометить пропажу.
         return hdds
 
     # ── Архив ─────────────────────────────────────────────────────────────────
@@ -209,26 +234,48 @@ class HikvisionClient(NVRClient):
                 "POST", "/ISAPI/ContentMgmt/search", data=body,
                 headers={"Content-Type": "application/xml"},
             )
-            if resp.status_code == 404:
+            if resp.status_code in (404, 405, 501):
                 raise FeatureUnavailable("поиск архива не поддерживается")
             if resp.status_code != 200:
-                raise FeatureUnavailable(f"search: HTTP {resp.status_code}")
-            root = _strip_ns(_body(resp))
+                raise NVRError(f"search: HTTP {resp.status_code}")
+            try:
+                root = _strip_ns(_body(resp))
+            except ET.ParseError as exc:
+                raise NVRError("Архив: некорректный XML результата поиска") from exc
+            status_str = (_text(root, "responseStatusStrg") or "").upper().strip()
+            if root.tag != "CMSearchResult" or status_str not in ("OK", "MORE", "NO MATCHES"):
+                raise NVRError("Архив: поиск не подтвердил успешный результат")
+            if (_text(root, "responseStatus") or "true").lower() == "false" and status_str != "NO MATCHES":
+                raise NVRError("Архив: NVR отклонил запрос поиска")
             matches = root.findall(".//searchMatchItem")
+            reported = _text(root, "numOfMatches")
+            if reported is not None:
+                try:
+                    count = int(reported)
+                    if count < len(matches) or (status_str != "MORE" and count != len(matches)):
+                        raise ValueError
+                except ValueError as exc:
+                    raise NVRError("Архив: число записей не соответствует результату поиска") from exc
+            if (status_str == "MORE" and not matches) or (status_str == "NO MATCHES" and matches):
+                raise NVRError("Архив: противоречивый результат поиска")
             for m in matches:
                 ts = m.find(".//timeSpan")
-                if ts is None:
-                    continue
                 st = _text(ts, "startTime")
                 en = _text(ts, "endTime")
-                if st and en:
-                    segments.append(
-                        ArchiveSegment(_parse_hik_time(st), _parse_hik_time(en))
-                    )
-            status_str = (_text(root, "responseStatusStrg") or "").upper()
-            if len(matches) < page or status_str == "OK":
+                try:
+                    if not st or not en:
+                        raise ValueError
+                    segment = ArchiveSegment(_parse_hik_time(st), _parse_hik_time(en))
+                    if segment.end <= segment.start:
+                        raise ValueError
+                except ValueError as exc:
+                    raise NVRError("Архив: некорректный временной интервал записи") from exc
+                segments.append(segment)
+            if status_str in ("OK", "NO MATCHES"):
                 break
-            position += page
+            position += len(matches)
+        else:
+            raise NVRError("Архив: превышен предел страниц; результат неполный")
         return segments
 
     # ── Время устройства ───────────────────────────────────────────────────────

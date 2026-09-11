@@ -5,20 +5,26 @@
 <div class="device-head" style="margin-top:14px">
   <div>
     <div class="kicker" style="margin-bottom:8px">Объект · {{ device.host }}:{{ device.http_port }}</div>
-    <h1><span class="dot {{ device_health(device) }}" style="width:12px;height:12px"></span>{{ device.name }}</h1>
+    <h1><span class="dot {{ health.color }}" title="{{ health.label }}" style="width:12px;height:12px"></span>{{ device.name }}</h1>
   </div>
-  <div class="device-actions">
+  <div class="device-actions device-actions-primary">
     <button onclick="location.href='/devices/{{ device.id }}/wall'">🖼 Стена камер</button>
     <button onclick="location.href='/devices/{{ device.id }}/report'">📄 Отчёт</button>
     <button onclick="pollNow({{ device.id }})">Опросить сейчас</button>
-    <button onclick="recheck({{ device.id }})">Перепроверить возможности</button>
-    <button onclick="archiveCheck({{ device.id }})">Проверить архив (вчера)</button>
-    <button onclick="archiveDepth({{ device.id }})">Глубина архива</button>
-    <button onclick="qualityCheck({{ device.id }})">Проверить качество</button>
-    <button onclick="syncTime({{ device.id }})">Синхр. время</button>
-    <button onclick="diag({{ device.id }})">Диагностика</button>
-    <button class="danger" onclick="rebootDevice({{ device.id }})">Перезагрузить</button>
-    <button class="danger" onclick="deleteDevice({{ device.id }})">Удалить</button>
+    <button onclick="recordingCheck({{ device.id }}, this)">Проверить свежую запись</button>
+    <details class="device-more-actions">
+      <summary>Ещё действия</summary>
+      <div class="device-more-menu">
+        <button onclick="recheck({{ device.id }})">Перепроверить возможности</button>
+        <button onclick="archiveCheck({{ device.id }})">Проверить архив за вчера</button>
+        <button onclick="archiveDepth({{ device.id }})">Глубина архива</button>
+        <button onclick="qualityCheck({{ device.id }})">Проверить качество</button>
+        <button onclick="syncTime({{ device.id }})">Синхронизировать время</button>
+        <button onclick="diag({{ device.id }})">Диагностика</button>
+        <button class="danger" onclick="rebootDevice({{ device.id }})">Перезагрузить</button>
+        <button class="danger" onclick="deleteDevice({{ device.id }})">Удалить</button>
+      </div>
+    </details>
   </div>
 </div>
 <div class="rule"></div>
@@ -26,6 +32,38 @@
 {% if device.last_error %}
 <div class="err-plate"><span>{{ device.last_error }}</span></div>
 {% endif %}
+
+<section id="monitoring-health" class="chart-card" style="margin:16px 0">
+  <div class="chart-head">
+    <h3>Состояние NVR <span class="badge {{ {'green':'ok','yellow':'warn','red':'err','gray':'muted'}.get(health.color, 'muted') }}">{{ health.label }}</span></h3>
+  </div>
+  {% set check_names = {'connection':'Связь','channels':'Камеры','hdd':'Диски','time':'Время','health':'Железо','recording':'Свежая запись','archive':'Архив','quality':'Качество картинки'} %}
+  {% set check_colors = {'ok':'ok','error':'err','critical':'err','missing':'err','warning':'warn','stale':'warn','time_error':'warn','unknown':'muted','unavailable':'muted','no_data':'muted','event':'muted','disabled':'muted'} %}
+  {% set check_labels = {'ok':'норма','error':'ошибка проверки','critical':'проблема','missing':'запись не найдена','warning':'внимание','stale':'данные устарели','time_error':'проверьте часы','unknown':'не проверено','unavailable':'недоступно','no_data':'нет данных','event':'по событию','disabled':'выключено'} %}
+  <div class="health-checks">
+    {% for kind, check in health.checks.items() %}
+    <div>
+      <b>{{ check_names.get(kind, kind) }}:</b>
+      <span class="badge {{ check_colors.get(check.status, 'muted') }}" title="{{ check.detail or '' }}">{{ check_labels.get(check.status, check.status) }}</span>
+      <time class="health-check-time" data-monitoring-time="{{ check.checked_at or '' }}" title="Проверено: {{ check.checked_at or 'ещё не проверено' }}">{{ check.checked_at or '—' }}</time>
+    </div>
+    {% endfor %}
+  </div>
+  {% if health.issues %}
+  <details class="health-issues">
+    <summary>Проблемы: {{ health.issues|length }} — показать список</summary>
+    <div class="health-issues-scroll">
+      {% for issue in health.issues %}
+      <div class="health-issue"><strong>{{ issue.title }}</strong>{% if issue.detail %}<span class="muted">{{ issue.detail }}</span>{% endif %}</div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</section>
+<nav class="device-jump" aria-label="Разделы регистратора">
+  <a href="#channels">Каналы</a><a href="#storage">HDD</a><a href="#archive-calendar">Архив</a><a href="#device-events">События</a><a href="#maintenance">Обслуживание</a>
+</nav>
+<p id="recording-action-result" class="muted" role="status" aria-live="polite" hidden></p>
 
 <section class="info-grid">
   <div><b>Host:</b> {{ device.host }}:{{ device.http_port }}</div>
@@ -49,13 +87,16 @@
   </div>
 </section>
 
-<h2>Каналы</h2>
+<span id="channels" class="section-anchor"></span><h2>Каналы</h2>
 <div class="table-wrap">
+<p class="muted" style="font-size:13px">Свежая запись — последний найденный фрагмент архива. Укажите ожидаемый режим для каждого канала: непрерывно, по событию или без контроля записи. Эта настройка меняет только мониторинг.</p>
 <table class="grid">
-  <thead><tr><th>#</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Картинка</th><th>Глубина</th><th>Изменён</th><th>Кадр</th><th>Монитор</th></tr></thead>
+  <thead><tr><th>#</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Свежая запись</th><th>Ожидаемый режим</th><th>Картинка</th><th>Глубина</th><th>Изменён</th><th>Кадр</th><th>Монитор</th></tr></thead>
   <tbody>
   {% set qm = {'ok':'ok','blurry':'warn','dark':'err','uniform':'err','frozen':'err','error':'err'} %}
   {% set ql = {'ok':'норма','blurry':'расфокус','dark':'тёмный','uniform':'залеплен','frozen':'завис','error':'ошибка'} %}
+  {% set recording_colors = {'ok':'ok','missing':'err','error':'warn','time_error':'warn','unknown':'muted','unavailable':'muted','event':'muted','disabled':'muted','stale':'warn'} %}
+  {% set recording_labels = {'ok':'запись есть','missing':'нет свежей записи','error':'ошибка проверки','time_error':'проверьте часы NVR','unknown':'не проверено','unavailable':'проверка недоступна','event':'по событию','disabled':'без контроля','stale':'данные устарели'} %}
   {% for c in device.channels|sort(attribute='channel_id') %}
     <tr class="{{ '' if c.enabled else 'row-muted' }}">
       <td>{{ c.channel_id }}</td>
@@ -64,6 +105,23 @@
       <td>
         {% set m = {'online':'ok','offline':'err','no_video':'warn','unknown':'muted'} %}
         <span class="badge {{ m[c.status] }}">{{ c.status }}</span>
+      </td>
+      <td>
+        {% set recording_state = 'disabled' if not c.enabled else ('stale' if c.channel_id in health.get('recording_stale_channels', []) and c.recording_status == 'ok' else c.recording_status) %}
+        <span class="badge {{ recording_colors.get(recording_state, 'muted') }}">{{ recording_labels.get(recording_state, recording_state) }}</span>
+        {% if c.recording_last_end %}
+          <div style="font-size:12px;margin-top:5px" title="Время регистратора">До {{ c.recording_last_end.strftime('%d.%m %H:%M:%S') }}</div>
+          {% if c.recording_age_seconds is not none %}<div class="muted" style="font-size:12px">На момент проверки: {{ (c.recording_age_seconds / 60) | round(1) }} мин. назад</div>{% endif %}
+        {% endif %}
+        <div class="muted" style="font-size:12px;margin-top:5px">Проверено: {{ c.recording_checked_at | localtime('%d.%m %H:%M:%S') }}</div>
+        {% if c.recording_error %}<div class="muted" style="font-size:12px">{{ c.recording_error }}</div>{% endif %}
+      </td>
+      <td>
+        <select aria-label="Ожидаемый режим записи канала {{ c.channel_id }}" data-previous-mode="{{ c.recording_mode }}" onchange="setRecordingMode({{ device.id }}, {{ c.channel_id }}, this)" style="max-width:170px">
+          <option value="continuous" {{ 'selected' if c.recording_mode == 'continuous' }}>Непрерывно</option>
+          <option value="event" {{ 'selected' if c.recording_mode == 'event' }}>По событию</option>
+          <option value="disabled" {{ 'selected' if c.recording_mode == 'disabled' }}>Без контроля</option>
+        </select>
       </td>
       <td>{% if c.quality %}<span class="badge {{ qm.get(c.quality,'muted') }}">{{ ql.get(c.quality, c.quality) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="muted">{% if c.archive_depth_days is not none %}{{ c.archive_depth_days }} дн.{% else %}—{% endif %}</td>
@@ -75,29 +133,36 @@
         </button>
       </td>
     </tr>
-  {% else %}<tr><td colspan="9" class="muted">Каналов нет (опросите устройство).</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="11" class="muted">Каналов нет (опросите устройство).</td></tr>{% endfor %}
   </tbody>
 </table>
 </div>
 
-<h2>Диски (HDD)</h2>
+<span id="storage" class="section-anchor"></span><h2>Диски (HDD)</h2>
+{% set hdd_check = health.checks.get('hdd', {}) %}
+<p class="muted" style="font-size:13px">Проверено: {% if hdd_check.get('checked_at') %}<time data-monitoring-time="{{ hdd_check.checked_at }}">{{ hdd_check.checked_at }}</time>{% else %}ещё не проверено{% endif %}. Заполнение при циклической перезаписи само по себе не означает неисправность.</p>
 <table class="grid">
-  <thead><tr><th>ID</th><th>Имя</th><th>Объём</th><th>Свободно</th><th>Заполнено</th><th>Статус</th></tr></thead>
+  <thead><tr><th>ID</th><th>Имя</th><th>Объём</th><th>Свободно</th><th>Заполнено</th><th>Готовность</th><th>Ответ NVR</th></tr></thead>
   <tbody>
   {% for h in device.hdds %}
     <tr>
       <td>{{ h.hdd_id }}</td><td>{{ h.name or '—' }}</td>
-      <td>{{ (h.capacity_mb/1024)|round(1) }} ГБ</td>
-      <td>{{ (h.free_mb/1024)|round(1) }} ГБ</td>
-      <td>{{ h.usage_percent }}%</td>
-      <td>{% set hm = {'ok':'ok','error':'err','no_disk':'err','unknown':'muted'} %}
-          <span class="badge {{ hm[h.status] }}">{{ h.status }}</span></td>
+      <td>{{ (h.capacity_mb/1024)|round(1) }} ГБ{% if not h.present %}<div class="muted" style="font-size:12px">последний известный объём</div>{% endif %}</td>
+      <td>{% if h.present %}{{ (h.free_mb/1024)|round(1) }} ГБ{% else %}—{% endif %}</td>
+      <td>{% if h.present %}{{ h.usage_percent }}%{% else %}—{% endif %}</td>
+      <td>{% set hm = {'ok':'ok','error':'err','no_disk':'err','unformatted':'err','read_only':'err','missing':'err','unknown':'muted'} %}
+          {% set hl = {'ok':'готов к записи','error':'ошибка','no_disk':'нет диска','unformatted':'не инициализирован','read_only':'только чтение','missing':'диск пропал','unknown':'неизвестно'} %}
+          {% set hstate = h.status if h.present else 'missing' %}
+          {% set hdd_unconfirmed = hdd_check.get('status', 'unknown') in ['stale','error','unavailable','unknown','no_data'] %}
+          <span class="badge {{ hm.get(hstate, 'muted') if not hdd_unconfirmed or hstate != 'ok' else 'warn' }}">{{ hl.get(hstate, hstate) }}</span>
+          {% if hdd_unconfirmed %}<div class="muted" style="font-size:12px">состояние не подтверждено</div>{% endif %}</td>
+      <td class="muted">{{ h.raw_status or '—' }}</td>
     </tr>
-  {% else %}<tr><td colspan="6" class="muted">Данных по HDD нет.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="7" class="muted">Данных по HDD нет — готовность к записи не подтверждена.</td></tr>{% endfor %}
   </tbody>
 </table>
 
-<h2>Календарь архива <span class="muted">14 дней · канал × день</span></h2>
+<span id="archive-calendar" class="section-anchor"></span><h2>Календарь архива <span class="muted">14 дней · канал × день</span></h2>
 <div class="blueprint" style="padding:14px 16px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
 <div class="calendar-wrap">
 <table class="calendar">
@@ -147,7 +212,7 @@
 </div>
 </div>
 
-<h2>События устройства</h2>
+<span id="device-events" class="section-anchor"></span><h2>События устройства</h2>
 <table class="grid">
   <thead><tr><th>Время</th><th>Тип</th><th>Уровень</th><th>Сообщение</th></tr></thead>
   <tbody>
@@ -162,7 +227,7 @@
   </tbody>
 </table>
 
-<h2>Журнал обслуживания</h2>
+<span id="maintenance" class="section-anchor"></span><h2>Журнал обслуживания</h2>
 <form id="note-form" class="note-form">
   <input id="note-text" placeholder="Например: заменил БП 12.06; на гарантии до 2027; лезть с лестницей" required>
   <input id="note-ch" type="number" min="1" placeholder="канал (необяз.)" style="max-width:140px">

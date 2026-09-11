@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 import urllib.parse
 
 from app.drivers.base import (
@@ -20,6 +21,7 @@ from app.drivers.base import (
     FeatureUnavailable,
     HddInfo,
     NVRClient,
+    NVRError,
 )
 from app.models import ApiType, HddState
 
@@ -139,28 +141,44 @@ class DahuaClient(NVRClient):
         resp = await self._request(
             "GET", "/cgi-bin/storageDevice.cgi", params={"action": "getDeviceAllInfo"}
         )
-        if resp.status_code != 200:
+        if resp.status_code in (404, 405, 501):
             raise FeatureUnavailable(f"storageDevice: HTTP {resp.status_code}")
+        if resp.status_code != 200:
+            raise NVRError(f"storageDevice: HTTP {resp.status_code}")
         kv = _parse_kv(_body(resp))
         # Формат: list[0].Detail[0].TotalBytes=..., .UsedBytes=..., .State=...
         # Собираем по индексам list[i].Detail[j]
         disks: dict[str, dict[str, str]] = {}
         for key, val in kv.items():
-            if key.startswith("list[") and ".Detail[" in key:
+            if re.fullmatch(r"list\[\d+\]\.Detail\[\d+\]\.\w+", key):
                 prefix, _, field = key.rpartition(".")
                 disks.setdefault(prefix, {})[field] = val
         hdds: list[HddInfo] = []
         for prefix, fields in sorted(disks.items()):
-            total_b = int(fields.get("TotalBytes", 0) or 0)
-            used_b = int(fields.get("UsedBytes", 0) or 0)
-            state = fields.get("State", "").lower()
+            try:
+                total_b = int(fields["TotalBytes"])
+                used_b = int(fields.get("UsedBytes", 0) or 0)
+                if total_b < 0 or used_b < 0 or used_b > total_b:
+                    raise ValueError
+            except (KeyError, TypeError, ValueError) as exc:
+                raise NVRError(f"HDD {prefix}: неполный или некорректный объём") from exc
+            raw_state = fields.get("State", "")
+            state = raw_state.lower().replace("-", "").replace("_", "").replace(" ", "")
+            prop = fields.get("Type") or fields.get("Property") or ""
+            access = prop.lower().replace("-", "").replace("_", "").replace(" ", "")
             name = fields.get("Name") or fields.get("Path") or prefix
-            if state in ("error", "abnormal", "broken"):
+            if state in ("error", "abnormal", "broken", "failed") or fields.get("IsError", "").lower() in ("true", "1"):
                 status = HddState.ERROR
-            elif total_b == 0:
+            elif state in ("unformatted", "uninitialized", "notformatted"):
+                status = HddState.UNFORMATTED
+            elif state in ("readonly", "ro") or access in ("readonly", "ro") or fields.get("ReadOnly", "").lower() in ("true", "1"):
+                status = HddState.READ_ONLY
+            elif state in ("nodisk", "notexist", "absent") or (total_b == 0 and state in ("", "idle")):
                 status = HddState.NO_DISK
-            else:
+            elif state in ("ok", "normal", "running") and total_b > 0:
                 status = HddState.OK
+            else:
+                status = HddState.UNKNOWN
             hdds.append(
                 HddInfo(
                     hdd_id=prefix,
@@ -168,10 +186,14 @@ class DahuaClient(NVRClient):
                     capacity_mb=total_b // (1024 * 1024),
                     free_mb=max(total_b - used_b, 0) // (1024 * 1024),
                     status=status,
+                    raw_status=f"{raw_state}; property={prop}" if prop else raw_state or None,
                 )
             )
         if not hdds:
-            raise FeatureUnavailable("HDD не обнаружены")
+            # Пустое тело/неизвестный ответ не доказывает отсутствие дисков.
+            # Принимаем только явный пустой список от прошивки.
+            if not any(kv.get(key) in ("0", "[]") for key in ("list", "list.count", "list.length")):
+                raise NVRError("HDD: полный список дисков не подтверждён")
         return hdds
 
     # ── Архив (фабрика mediaFileFind) ──────────────────────────────────────────
@@ -183,13 +205,13 @@ class DahuaClient(NVRClient):
         resp = await self._request(
             "GET", "/cgi-bin/mediaFileFind.cgi", params={"action": "factory.create"}
         )
-        if resp.status_code == 404:
+        if resp.status_code in (404, 405, 501):
             raise FeatureUnavailable("mediaFileFind не поддерживается")
         if resp.status_code != 200:
-            raise FeatureUnavailable(f"factory.create: HTTP {resp.status_code}")
+            raise NVRError(f"factory.create: HTTP {resp.status_code}")
         obj = _parse_kv(resp.text).get("result")
-        if not obj:
-            raise FeatureUnavailable("mediaFileFind: нет object id")
+        if not obj or not obj.isdigit():
+            raise NVRError("mediaFileFind: нет корректного object id")
 
         segments: list[ArchiveSegment] = []
         try:
@@ -205,8 +227,14 @@ class DahuaClient(NVRClient):
             r = await self._request(
                 "GET", "/cgi-bin/mediaFileFind.cgi", params=find_params
             )
-            if r.status_code != 200 or "ok" not in r.text.lower():
-                return segments  # ничего не найдено / пусто
+            if r.status_code in (404, 405, 501):
+                raise FeatureUnavailable("findFile не поддерживается")
+            if r.status_code != 200:
+                raise NVRError(f"findFile: HTTP {r.status_code}")
+            if _parse_kv(r.text).get("found") == "0":
+                return []  # Явный успешный пустой результат.
+            if r.text.strip().lower() != "ok":
+                raise NVRError("findFile: запрос не подтверждён устройством")
 
             # c) findNextFile (постранично)
             for _ in range(200):
@@ -216,29 +244,39 @@ class DahuaClient(NVRClient):
                     params={"action": "findNextFile", "object": obj, "count": 100},
                 )
                 if rn.status_code != 200:
-                    break
+                    raise NVRError(f"findNextFile: HTTP {rn.status_code}; результат неполный")
                 kv = _parse_kv(rn.text)
-                found = int(kv.get("found", 0) or 0)
-                if found == 0:
-                    break
+                try:
+                    found = int(kv["found"])
+                    if not 0 <= found <= 100:
+                        raise ValueError
+                except (KeyError, ValueError) as exc:
+                    raise NVRError("findNextFile: не подтверждено число найденных записей") from exc
                 items: dict[int, dict[str, str]] = {}
                 for key, val in kv.items():
                     if key.startswith("items["):
-                        idx_str = key[len("items["):].split("]", 1)[0]
-                        field = key.split(".", 1)[1] if "." in key else key
-                        items.setdefault(int(idx_str), {})[field] = val
+                        match = re.fullmatch(r"items\[(\d+)\]\.(\w+)", key)
+                        if not match:
+                            raise NVRError("findNextFile: некорректная запись результата")
+                        items.setdefault(int(match[1]), {})[match[2]] = val
+                if len(items) != found:
+                    raise NVRError("findNextFile: неполная страница результатов")
                 for _, fields in sorted(items.items()):
                     st = fields.get("StartTime")
                     en = fields.get("EndTime")
-                    if st and en:
-                        try:
-                            segments.append(
-                                ArchiveSegment(_parse_dahua_time(st), _parse_dahua_time(en))
-                            )
-                        except ValueError:
-                            continue
+                    try:
+                        if not st or not en:
+                            raise ValueError
+                        segment = ArchiveSegment(_parse_dahua_time(st), _parse_dahua_time(en))
+                        if segment.end <= segment.start:
+                            raise ValueError
+                    except ValueError as exc:
+                        raise NVRError("findNextFile: некорректный временной интервал") from exc
+                    segments.append(segment)
                 if found < 100:
                     break
+            else:
+                raise NVRError("Архив: превышен предел страниц; результат неполный")
         finally:
             # d) destroy
             try:
@@ -247,8 +285,8 @@ class DahuaClient(NVRClient):
                     "/cgi-bin/mediaFileFind.cgi",
                     params={"action": "destroy", "object": obj},
                 )
-            except FeatureUnavailable:
-                pass
+            except NVRError as exc:
+                log.debug("mediaFileFind destroy: %s", exc)
         return segments
 
     # ── Время устройства ───────────────────────────────────────────────────────

@@ -2,20 +2,34 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TV — NVR Monitor</title>
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=19">
+  <style>
+    .tv-head { flex-wrap: wrap; }
+    .tv-tile { display: block; text-decoration: none; overflow-wrap: anywhere; }
+    .tv-issue { font-size: 14px; margin-top: 7px; }
+    .tv-notice { margin: 14px 22px 0; padding: 12px 16px; border: 1px solid var(--warn); border-radius: var(--radius); color: var(--warn); }
+    .tv-notice[data-error="true"] { border-color: var(--err); color: var(--err); }
+    .tv-grid[data-stale="true"] .tv-tile { background: var(--panel-2); color: var(--text); }
+  </style>
 </head>
 <body class="tv-body">
   <div class="tv-head">
-    <span id="tv-clock"></span>
+    <span id="tv-clock">Сводка ещё не получена</span>
     <span id="tv-summary" class="muted"></span>
-    <a href="/">выйти из TV-режима →</a>
+    <a href="/" class="muted">выйти</a>
   </div>
-  <div id="tv-grid" class="tv-grid"></div>
+  <div id="tv-notice" class="tv-notice" role="status" aria-live="polite">Загрузка состояния NVR…</div>
+  <div id="tv-grid" class="tv-grid" data-stale="true"></div>
 
 <script>
-let known = {};   // id -> reachable/health, для звука на новую проблему
+let known = {};   // id -> есть проблема, для звука при новом отказе
 let audioCtx = null;
+let lastSuccess = 0;
+let inProgress = false;
+let healthError = "";
+let archiveError = "";
 function beep() {
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -25,57 +39,119 @@ function beep() {
     o.start(); setTimeout(() => o.stop(), 400);
   } catch (e) {}
 }
-const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
-function tile(d, up, total, arch) {
-  let cls = "green";
-  if (!d.enabled) cls = "gray";
-  else if (!d.reachable) cls = "red";
-  else if (up < total) cls = "yellow";
-  let archLine = '<div class="tv-arch">архив: нет данных</div>';
+const ARCH_DOT = { green: "🟢", yellow: "🟡", red: "🔴", gray: "⚪" };
+const CHECK_LABELS = {
+  ok: "норма", error: "ошибка проверки", critical: "проблема", missing: "нет записи",
+  stale: "данные устарели", warning: "внимание", unknown: "не проверено",
+  unavailable: "недоступно", no_data: "нет данных", event: "по событию",
+  disabled: "выключено", time_error: "проверьте часы",
+};
+function addText(parent, className, value) {
+  const element = document.createElement("div");
+  element.className = className;
+  element.textContent = value;
+  parent.appendChild(element);
+  return element;
+}
+function tile(d, arch, archiveDay) {
+  const health = d.health || { color: "gray", label: "Нет сводки", issues: [], checks: {} };
+  const color = Object.hasOwn(ARCH_DOT, health.color) ? health.color : "gray";
+  const element = document.createElement("a");
+  element.className = `tv-tile ${color}`;
+  element.href = `/devices/${encodeURIComponent(d.id)}`;
+  addText(element, "tv-name", d.name);
+  addText(element, "tv-stat", health.label);
+  addText(element, "tv-arch", !d.enabled ? "Мониторинг выключен"
+    : !d.reachable ? "NVR недоступен"
+    : `${d.channels_online}/${d.channels_total} камер под контролем`);
+  const checks = health.checks || {};
+  const stateLabel = kind => CHECK_LABELS[checks[kind]?.status] || "нет данных";
+  if (d.enabled) addText(element, "tv-arch", `Запись: ${stateLabel("recording")} · HDD: ${stateLabel("hdd")}`);
+  (health.issues || []).slice(0, 2).forEach(issue => {
+    const line = addText(element, "tv-issue", issue.title);
+    line.title = issue.detail || "";
+  });
+  if ((health.issues || []).length > 2) addText(element, "tv-issue", `Ещё проблем: ${health.issues.length - 2}`);
+  let archiveLine = "Архив за сутки: нет данных";
   if (arch && arch.total) {
-    let extra = "";
-    if (arch.none) extra = ` · ${arch.none} без записи`;
-    else if (arch.partial) extra = ` · ${arch.partial} с дырами`;
-    archLine = `<div class="tv-arch">архив ${arch.full}/${arch.total}${extra}</div>`;
+    const checked = arch.full + arch.partial + arch.none;
+    const date = archiveDay ? ` (${archiveDay.slice(8, 10)}.${archiveDay.slice(5, 7)})` : "";
+    archiveLine = `Архив${date}: ${checked ? `${arch.full}/${checked} проверенных` : "не проверен"}`;
+    if (arch.none) archiveLine += ` · ${arch.none} без записи`;
+    if (arch.partial) archiveLine += ` · ${arch.partial} с дырами`;
+    if (arch.no_data) archiveLine += ` · нет данных: ${arch.no_data}`;
   }
-  // угловые метки «+» — только на плитках-рамках (норма)
-  return `<div class="tv-tile ${cls}" onclick="location.href='/devices/${d.id}'">
-    ${cls === "green" ? CORNERS : ""}
-    <div class="tv-name">${d.name}</div>
-    <div class="tv-stat">${d.reachable ? up + "/" + total + " камер" : "НЕДОСТУПЕН"}</div>
-    ${archLine}
-  </div>`;
+  addText(element, "tv-arch", archiveLine);
+  return element;
+}
+function checkFreshness() {
+  const stale = !lastSuccess || Date.now() - lastSuccess > 30000 || Boolean(healthError);
+  const notice = document.getElementById("tv-notice");
+  document.getElementById("tv-grid").dataset.stale = String(stale);
+  notice.dataset.error = String(stale && Boolean(lastSuccess || healthError));
+  notice.hidden = !stale && !archiveError;
+  notice.textContent = healthError || (stale
+    ? (lastSuccess ? "Данные устарели: сводка NVR не обновляется. Карточки показывают последнее полученное состояние." : "Загрузка состояния NVR…")
+    : archiveError);
+}
+async function getJson(path, signal) {
+  const response = await fetch(path, { signal, cache: "no-store" });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
 }
 async function refresh() {
-  document.getElementById("tv-clock").textContent = new Date().toLocaleString("ru-RU");
+  if (inProgress) return;
+  inProgress = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const [list, sum, arch] = await Promise.all([
-      fetch("/api/devices").then(r => r.json()),
-      fetch("/api/summary").then(r => r.json()),
-      fetch("/api/archive/overview").then(r => r.json()),
+    const [healthResult, archiveResult] = await Promise.allSettled([
+      getJson("/api/monitoring/health", controller.signal),
+      getJson("/api/archive/overview", controller.signal),
     ]);
+    if (healthResult.status !== "fulfilled") throw healthResult.reason;
+    const data = healthResult.value;
+    if (!Array.isArray(data.devices)) throw new Error("некорректный ответ сервера");
+    const devices = data.devices;
+    const arch = archiveResult.status === "fulfilled" ? archiveResult.value : null;
+    archiveError = arch ? "" : "Сводка архива за сутки недоступна. Состояние NVR обновлено.";
     const archById = {};
-    (arch.devices || []).forEach(a => { archById[a.device_id] = a; });
-    const archNote = arch.day
-      ? ` · архив (${arch.day.slice(8,10)}.${arch.day.slice(5,7)}): ${arch.totals.none} без записи, ${arch.totals.partial} с дырами`
-      : "";
+    (arch?.devices || []).forEach(a => { archById[a.device_id] = a; });
+    const monitored = devices.filter(d => d.enabled);
+    const healthy = monitored.filter(d => d.health?.color === "green").length;
+    const problems = monitored.filter(d => ["red", "yellow"].includes(d.health?.color)).length;
+    const unknown = monitored.length - healthy - problems;
     document.getElementById("tv-summary").textContent =
-      `всего ${sum.devices_total} · онлайн ${sum.devices_online} · проблемы ${sum.devices_with_problems} · недоступны ${sum.devices_unreachable}${archNote}`;
-    const detailed = await Promise.all(list.map(d => fetch(`/api/devices/${d.id}`).then(r => r.json())));
-    let html = "";
-    for (const d of detailed) {
-      const total = d.channels.length;
-      const up = d.channels.filter(c => c.status === "online").length;
-      const bad = !d.reachable || up < total;
-      if (bad && known[d.id] === false) beep();  // стало плохо
-      known[d.id] = bad;
-      html += tile(d, up, total, archById[d.id]);
+      `NVR: ${devices.length} · в норме: ${healthy} · с проблемами: ${problems} · нет данных: ${unknown} · выключено: ${devices.length - monitored.length}`;
+    const grid = document.getElementById("tv-grid");
+    const fragment = document.createDocumentFragment();
+    const nextKnown = {};
+    let newProblem = false;
+    for (const d of devices) {
+      const bad = d.enabled && ["red", "yellow"].includes(d.health?.color);
+      if (bad && known[d.id] === false) newProblem = true;
+      nextKnown[d.id] = bad;
+      fragment.appendChild(tile(d, archById[d.id], arch?.day));
     }
-    document.getElementById("tv-grid").innerHTML = html;
-  } catch (e) {}
+    known = nextKnown;
+    grid.replaceChildren(fragment);
+    if (!devices.length) addText(grid, "muted", "Устройств пока нет.");
+    if (newProblem) beep();
+    lastSuccess = Date.now();
+    healthError = "";
+    document.getElementById("tv-clock").textContent = "Сводка получена: " + new Date(lastSuccess).toLocaleString("ru-RU");
+  } catch (error) {
+    healthError = "Данные не обновляются: " + (error.name === "AbortError" ? "сервер не ответил вовремя" : error.message)
+      + (lastSuccess ? ". Карточки показывают последнее полученное состояние." : ". Состояние NVR неизвестно.");
+  } finally {
+    clearTimeout(timeout);
+    inProgress = false;
+    checkFreshness();
+  }
 }
 refresh();
 setInterval(refresh, 10000);
+setInterval(checkFreshness, 1000);
 </script>
 </body>
 </html>

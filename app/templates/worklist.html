@@ -39,7 +39,7 @@
   <div class="wl-empty blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>Проблем нет<div style="font-family:var(--font-body);font-size:14px;font-weight:400;letter-spacing:0;text-transform:none;margin-top:6px" class="muted">Все объекты в норме.</div></div>
 {% else %}
 <div class="wl-list">
-  {% set kind_tag = {'unreachable':'СЕТЬ','channel':'КАМ','quality':'КАЧ','drift':'ВРЕМЯ','archive':'АРХ','hdd':'HDD'} %}
+  {% set kind_tag = {'unreachable':'СЕТЬ','channel':'КАМ','quality':'КАЧ','drift':'ВРЕМЯ','archive':'АРХ','hdd':'HDD','recording':'ЗАПИСЬ','switch':'SW'} %}
   {% for i in issues %}
   <div class="wl-item sev-{{ i.severity }} {{ 'taken' if i.ack else '' }}"
        data-sev="{{ i.severity }}" data-taken="{{ '1' if i.ack else '0' }}">
@@ -47,7 +47,7 @@
     <span class="badge warn" style="flex:none;min-width:52px;justify-content:center">{{ kind_tag.get(i.kind, '⚠') }}</span>
     <div class="wl-main">
       <div class="wl-title">
-        <a href="/devices/{{ i.device_id }}">{{ i.device_name }}</a>
+        <a href="{{ i.target_url if i.target_url is defined else '/devices/' ~ i.device_id }}">{{ i.device_name }}</a>
         <span class="wl-sep">·</span> {{ i.title }}
       </div>
       <div class="wl-meta">
