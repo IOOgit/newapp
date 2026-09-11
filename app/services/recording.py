@@ -38,15 +38,22 @@ def _wall_clock(value: dt.datetime) -> dt.datetime:
 def _latest_end(
     segments: list[ArchiveSegment], start: dt.datetime, now: dt.datetime,
 ) -> dt.datetime | None:
-    """Проверяет ответ целиком: будущий/повреждённый интервал не даёт «норму»."""
+    """Возвращает конец последней реально начавшейся записи.
+
+    NVR нередко отдаёт конец текущего открытого/планового фрагмента позже своих
+    текущих часов. Такой конец ограничиваем текущим временем. Полностью будущие
+    фрагменты игнорируем: они не подтверждают запись, но не ломают весь канал.
+    """
     latest = None
     for segment in segments:
         seg_start = _wall_clock(segment.start)
         seg_end = _wall_clock(segment.end)
         if seg_end <= seg_start:
             raise ValueError("NVR вернул пустой или обратный интервал записи")
-        if seg_start > now or seg_end > now:
-            raise ValueError("В индексе архива есть запись из будущего относительно часов NVR")
+        if seg_start > now:
+            continue
+        if seg_end > now:
+            seg_end = now
         if seg_end <= start:
             continue
         if latest is None or seg_end > latest:

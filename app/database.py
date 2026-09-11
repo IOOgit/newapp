@@ -122,6 +122,16 @@ def _lightweight_migrate(sync_conn) -> None:
                     sync_conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {ddl}'))
             except Exception as exc:  # noqa: BLE001
                 log.warning("Миграция %s.%s пропущена: %s", table, column, exc)
+    # Ранее эта модель была ошибочно заведена как SNMP-устройство. Исправляем
+    # существующие записи один раз; snmp_port остаётся физическим именем колонки,
+    # но теперь хранит TCP-порт веб-интерфейса.
+    if "network_switches" in tables:
+        sync_conn.execute(text(
+            "UPDATE network_switches SET snmp_port=80, snmp_version='none', "
+            "community_enc='', retries=0, reachable=FALSE, last_error="
+            "'Метод мониторинга изменён; требуется проверка TCP-доступности' "
+            "WHERE model='DH-CS4226-24ET-240' AND snmp_version!='none'"
+        ))
 
 
 async def init_db() -> None:

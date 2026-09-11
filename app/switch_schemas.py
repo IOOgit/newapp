@@ -5,7 +5,7 @@ import ipaddress
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SwitchFields(BaseModel):
@@ -42,11 +42,8 @@ class SwitchCreate(SwitchFields):
     host: str = Field(min_length=1, max_length=253)
     model: Literal["DH-CS4226-24ET-240"] = "DH-CS4226-24ET-240"
     group_id: int | None = Field(default=None, gt=0)
-    snmp_port: int = Field(default=161, ge=1, le=65535)
-    snmp_version: Literal["2c"] = "2c"
-    community: SecretStr = Field(min_length=1, max_length=255)
+    management_port: int = Field(default=80, ge=1, le=65535)
     timeout: float = Field(default=2, ge=0.5, le=5, allow_inf_nan=False)
-    retries: int = Field(default=1, ge=0, le=2)
     enabled: bool = True
 
 
@@ -55,11 +52,8 @@ class SwitchUpdate(SwitchFields):
     host: str | None = Field(default=None, min_length=1, max_length=253)
     model: Literal["DH-CS4226-24ET-240"] | None = None
     group_id: int | None = Field(default=None, gt=0)
-    snmp_port: int | None = Field(default=None, ge=1, le=65535)
-    snmp_version: Literal["2c"] | None = None
-    community: SecretStr | None = Field(default=None, max_length=255)
+    management_port: int | None = Field(default=None, ge=1, le=65535)
     timeout: float | None = Field(default=None, ge=0.5, le=5, allow_inf_nan=False)
-    retries: int | None = Field(default=None, ge=0, le=2)
     enabled: bool | None = None
 
 

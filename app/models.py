@@ -215,7 +215,7 @@ class Hdd(Base):
 
 
 class NetworkSwitch(Base):
-    """Коммутатор камер: SNMP только для чтения, community хранится зашифрованным."""
+    """Коммутатор камер. Старые имена полей сохранены для совместимости БД."""
 
     __tablename__ = "network_switches"
 
@@ -224,11 +224,11 @@ class NetworkSwitch(Base):
     host: Mapped[str] = mapped_column(String(255))
     model: Mapped[str] = mapped_column(String(128), default="DH-CS4226-24ET-240")
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), default=None)
-    snmp_port: Mapped[int] = mapped_column(Integer, default=161)
-    snmp_version: Mapped[str] = mapped_column(String(8), default="2c")
+    snmp_port: Mapped[int] = mapped_column(Integer, default=80)  # TCP-порт управления
+    snmp_version: Mapped[str] = mapped_column(String(8), default="none")
     community_enc: Mapped[str] = mapped_column(Text, default="")
     timeout: Mapped[float] = mapped_column(Float, default=2.0)
-    retries: Mapped[int] = mapped_column(Integer, default=1)
+    retries: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     reachable: Mapped[bool] = mapped_column(Boolean, default=False)
     last_attempt_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)

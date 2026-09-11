@@ -1,7 +1,7 @@
 // Service worker: установка PWA + офлайн-заглушка.
 // Стратегия "сначала сеть" — чтобы обновления стилей/страниц всегда подтягивались,
 // а кэш использовался только когда нет связи.
-const CACHE = "nvrmon-v7";
+const CACHE = "nvrmon-v8";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();

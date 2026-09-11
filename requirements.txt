@@ -18,7 +18,6 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 python-dotenv==1.0.1
 onvif-zeep-async==3.1.12
-pysnmp==7.1.27
 
 # dev / tests
 pytest==8.3.4

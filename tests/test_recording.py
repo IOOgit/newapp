@@ -133,19 +133,35 @@ async def test_clock_failure_never_uses_server_clock(db, clock_result, clock_err
 
 
 @pytest.mark.parametrize("segments", [
-    [ArchiveSegment(NOW - dt.timedelta(minutes=2), NOW + dt.timedelta(minutes=1))],
-    [ArchiveSegment(NOW + dt.timedelta(minutes=1), NOW + dt.timedelta(minutes=2))],
     [ArchiveSegment(NOW, NOW)],
     [ArchiveSegment(NOW, NOW - dt.timedelta(minutes=1))],
-    [_segment(), ArchiveSegment(NOW, NOW + dt.timedelta(minutes=1))],
 ])
-async def test_invalid_or_future_segments_cannot_make_channel_green(db, segments):
+async def test_invalid_segments_cannot_make_channel_green(db, segments):
     async with SessionLocal() as session:
         device, (channel,) = await _device(session)
         await recording.check_recording_device(session, device, client=_driver(segments))
         assert channel.recording_status == "error"
         assert channel.recording_last_end is None
         assert channel.recording_age_seconds is None
+
+
+async def test_open_segment_with_future_end_is_clamped_to_nvr_now(db):
+    segments = [ArchiveSegment(NOW - dt.timedelta(minutes=2), NOW + dt.timedelta(hours=1))]
+    async with SessionLocal() as session:
+        device, (channel,) = await _device(session)
+        await recording.check_recording_device(session, device, client=_driver(segments))
+        assert channel.recording_status == "ok"
+        assert channel.recording_last_end == NOW
+        assert channel.recording_age_seconds == 0
+
+
+async def test_entirely_future_segment_is_ignored_not_reported_as_error(db):
+    segments = [ArchiveSegment(NOW + dt.timedelta(minutes=1), NOW + dt.timedelta(minutes=2))]
+    async with SessionLocal() as session:
+        device, (channel,) = await _device(session)
+        await recording.check_recording_device(session, device, client=_driver(segments))
+        assert channel.recording_status == "missing"
+        assert channel.recording_error is None
 
 
 async def test_event_recording_and_disabled_channels(db):

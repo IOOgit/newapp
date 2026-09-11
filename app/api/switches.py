@@ -1,4 +1,4 @@
-"""Карточки свитчей, SNMP-настройки и ручное назначение камер портам."""
+"""Карточки свитчей и проверка доступности без ложной SNMP-телеметрии."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from app.crypto import encrypt
 from app.database import get_session
 from app.models import Channel, Device, Group, NetworkSwitch, SwitchPort
 from app.services import audit
@@ -55,11 +54,14 @@ register(templates)
 
 def switch_payload(switch: NetworkSwitch) -> dict:
     """Только явно перечисленные публичные поля, никогда ORM/__dict__."""
-    fields = ("id", "name", "host", "model", "group_id", "snmp_port", "snmp_version",
-              "timeout", "retries", "enabled", "reachable", "last_attempt_at", "last_seen",
+    fields = ("id", "name", "host", "model", "group_id",
+              "timeout", "enabled", "reachable", "last_attempt_at", "last_seen",
               "last_error", "sys_name", "sys_descr", "sys_object_id", "uptime_ticks",
               "capabilities", "poe_ports", "poe_supplies")
     result = {field: getattr(switch, field) for field in fields}
+    result["management_port"] = switch.snmp_port  # имя столбца БД оставлено для совместимости
+    result["monitoring_method"] = "tcp"
+    result["telemetry_available"] = False
     result["health"] = service.switch_health(switch)
     result["polling"] = service.is_polling(switch.id)
     port_fields = ("id", "if_index", "name", "description", "alias", "admin_status",
@@ -134,8 +136,9 @@ async def get_switch(switch_id: int, session: AsyncSession = Depends(get_session
 @router.post("/api/switches", status_code=201)
 async def create_switch(data: SwitchCreate, request: Request, session: AsyncSession = Depends(get_session)):
     await _group(session, data.group_id)
-    switch = NetworkSwitch(**data.model_dump(exclude={"community"}),
-                           community_enc=encrypt(data.community.get_secret_value()), ports=[])
+    values = data.model_dump(exclude={"management_port"})
+    switch = NetworkSwitch(**values, snmp_port=data.management_port,
+                           snmp_version="none", community_enc="", retries=0, ports=[])
     session.add(switch)
     await session.commit()
     await audit.log_action(session, request, "create_switch", target=switch.name)
@@ -146,7 +149,9 @@ async def create_switch(data: SwitchCreate, request: Request, session: AsyncSess
 async def update_switch(switch_id: int, data: SwitchUpdate, request: Request,
                         session: AsyncSession = Depends(get_session)):
     switch = await _get(session, switch_id)
-    changes = data.model_dump(exclude_unset=True, exclude={"community"})
+    changes = data.model_dump(exclude_unset=True)
+    if "management_port" in changes:
+        changes["snmp_port"] = changes.pop("management_port")
     if "group_id" in changes:
         await _group(session, data.group_id)
         if data.group_id is not None:
@@ -161,10 +166,7 @@ async def update_switch(switch_id: int, data: SwitchUpdate, request: Request,
         if value is None and key != "group_id":
             raise HTTPException(422, "Обязательные настройки не могут быть null")
         setattr(switch, key, value)
-    secret = data.community.get_secret_value() if data.community is not None else ""
-    if secret:
-        switch.community_enc = encrypt(secret)
-    if secret or any(key in changes for key in ("host", "snmp_port", "snmp_version")):
+    if any(key in changes for key in ("host", "snmp_port")):
         switch.reachable = False
         switch.last_error = "Настройки изменены; требуется новый опрос"
         for port in switch.ports:
@@ -219,7 +221,7 @@ async def update_port(switch_id: int, port_id: int, data: SwitchPortUpdate, requ
         changes["expected_up"] = True
     if data.poe_index is not None:
         if data.poe_index not in (switch.poe_ports or {}):
-            raise HTTPException(422, "PoE-порт не найден в последнем снимке SNMP")
+            raise HTTPException(422, "Телеметрия PoE для этой модели недоступна")
         if any(p.id != port.id and p.poe_index == data.poe_index for p in switch.ports):
             raise HTTPException(422, "PoE-порт уже назначен другому интерфейсу")
     if "expected_up" in changes and changes["expected_up"] is None:

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     recording_max_age_minutes: int = Field(default=15, ge=1, le=1440)
     recording_window_minutes: int = Field(default=45, ge=1, le=1440)
 
-    # Коммутаторы: SNMP только для чтения, с ограничением нагрузки.
+    # Коммутаторы: проверка TCP-доступности с ограничением нагрузки.
     switch_poll_seconds: int = Field(default=60, ge=10, le=3600)
     switch_poll_timeout_seconds: int = Field(default=30, ge=5, le=120)
     switch_max_concurrent_polls: int = Field(default=4, ge=1, le=20)

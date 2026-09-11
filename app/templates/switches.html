@@ -3,115 +3,66 @@
 {% block content %}
 {% set selected = selected|default(group_id|default(none)) %}
 {% set status_classes = {'green':'ok', 'yellow':'warn', 'red':'err', 'gray':'muted'} %}
-<style>
-.sw-table-wrap { overflow-x: auto; margin-top: 16px; }
-.sw-table-wrap table { min-width: 780px; }
-.sw-sub { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-.sw-note { padding: 14px 18px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
-.sw-form input[type=checkbox] { width: auto; margin: 0 8px 0 0; }
-.sw-form .sw-error { white-space: pre-wrap; overflow-wrap: anywhere; }
-.sw-form button:disabled { opacity: .55; cursor: wait; }
-</style>
 <a href="/" class="muted">← к дашборду</a>
 <div class="device-head">
   <h1>Коммутаторы камер</h1>
-  <div class="device-actions">
-    <button type="button" class="secondary" onclick="location.reload()">Обновить экран</button>
-    <button type="button" id="sw-create-open">+ Коммутатор</button>
-  </div>
+  <div class="device-actions"><button type="button" id="sw-create-open">+ Коммутатор</button></div>
 </div>
-<p class="muted">Доступность по SNMP, состояние портов и питание PoE. Свяжите порт с камерой, чтобы видеть место подключения.</p>
+<div class="err-plate">
+  <span><b>DH-CS4226-24ET-240 не поддерживает SNMP.</b> Система проверяет только доступность веб-интерфейса по TCP. Состояние портов, PoE, трафик и ошибки не контролируются.</span>
+</div>
 <form method="get" action="/switches" class="bulkbar">
   <label for="sw-group">Объект</label>
-  <select id="sw-group" name="group_id" onchange="location.href = this.value ? '/switches?group_id=' + encodeURIComponent(this.value) : '/switches'">
+  <select id="sw-group" name="group_id" onchange="location.href=this.value?'/switches?group_id='+encodeURIComponent(this.value):'/switches'">
     <option value="">Все объекты</option>
     {% for group in groups %}<option value="{{ group.id }}" {{ 'selected' if selected == group.id else '' }}>{{ group.name }}</option>{% endfor %}
   </select>
 </form>
-<div class="cards">
-  <div class="card"><strong class="num">{{ switches|length }}</strong><span>Коммутаторов в списке</span></div>
-  <div class="card ok"><strong class="num">{{ switches|selectattr('health.state', 'equalto', 'green')|list|length }}</strong><span>Подтверждена норма</span></div>
-  <div class="card warn"><strong class="num">{{ (switches|selectattr('health.state', 'equalto', 'yellow')|list|length) + (switches|selectattr('health.state', 'equalto', 'red')|list|length) }}</strong><span>Требуют внимания</span></div>
-  <div class="card"><strong class="num">{{ switches|selectattr('health.state', 'equalto', 'gray')|list|length }}</strong><span>Нет оценки / выключены</span></div>
-</div>
-<div class="sw-table-wrap">
-  <table class="grid">
-    <thead><tr><th>Коммутатор</th><th>Объект</th><th>Состояние</th><th>Порты</th><th>Последний успешный опрос</th></tr></thead>
-    <tbody>
-    {% for sw in switches %}
-    <tr>
-      <td><a href="/switches/{{ sw.id }}"><strong>{{ sw.name }}</strong></a><span class="sw-sub">{{ sw.host }} · {{ sw.model or 'Модель не задана' }}</span></td>
-      <td>{% set found = namespace(name='Без объекта') %}{% for group in groups %}{% if group.id == sw.group_id %}{% set found.name = group.name %}{% endif %}{% endfor %}{{ found.name }}</td>
-      <td><span class="badge {{ status_classes.get(sw.health.state, 'muted') }}">{{ sw.health.label }}</span>
-        {% if sw.health.stale %}<span class="badge warn">Данные устарели</span>{% endif %}
-        {% for reason in sw.health.reasons[:2] %}<span class="sw-sub">{{ reason }}</span>{% endfor %}
-      </td>
-      <td>{% if sw.ports %}{{ sw.ports|selectattr('present')|selectattr('oper_status', 'equalto', 1)|list|length }} активных / {{ sw.ports|selectattr('present')|list|length }} найдено<span class="sw-sub">Контроль связи: {{ sw.ports|selectattr('expected_up')|list|length }}</span>{% else %}<span class="muted">Нет данных</span>{% endif %}</td>
-      <td>{{ sw.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}<span class="sw-sub">Попытка: {{ sw.last_attempt_at|localtime('%d.%m %H:%M:%S') }}</span></td>
-    </tr>
-    {% else %}<tr><td colspan="5" class="muted">Коммутаторов пока нет. Добавьте адрес устройства и community с доступом на чтение.</td></tr>{% endfor %}
-    </tbody>
-  </table>
-</div>
-<p class="sw-note muted">Профиль DH-CS4226-24ET-240 использует стандартные SNMP-таблицы. Наличие данных PoE зависит от прошивки и определяется при опросе. Неиспользуемые отключённые порты не считаются аварией.</p>
+<div class="table-wrap"><table class="grid">
+  <thead><tr><th>Коммутатор</th><th>Объект</th><th>Состояние</th><th>Метод контроля</th><th>Последняя проверка</th></tr></thead>
+  <tbody>
+  {% for sw in switches %}
+  <tr>
+    <td><a href="/switches/{{ sw.id }}"><strong>{{ sw.name }}</strong></a><div class="muted">{{ sw.host }}:{{ sw.management_port }} · {{ sw.model }}</div></td>
+    <td>{% set found=namespace(name='Без объекта') %}{% for group in groups %}{% if group.id==sw.group_id %}{% set found.name=group.name %}{% endif %}{% endfor %}{{ found.name }}</td>
+    <td><span class="badge {{ status_classes.get(sw.health.state,'muted') }}">{{ sw.health.label }}</span>{% for reason in sw.health.reasons %}<div class="muted">{{ reason }}</div>{% endfor %}</td>
+    <td>TCP веб-интерфейса<div class="muted">Телеметрии портов нет</div></td>
+    <td>{{ sw.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}</td>
+  </tr>
+  {% else %}<tr><td colspan="5" class="muted">Коммутаторов пока нет.</td></tr>{% endfor %}
+  </tbody>
+</table></div>
 
-<div id="sw-create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sw-create-title">
-  <div class="modal-card">
-    <h3 id="sw-create-title">Добавить коммутатор</h3>
-    <form id="sw-create-form" class="sw-form">
-      <label>Название<input name="name" required maxlength="128" placeholder="Например, склад · шкаф 1"></label>
-      <label>Объект<select name="group_id"><option value="">Без объекта</option>{% for group in groups %}<option value="{{ group.id }}" {{ 'selected' if selected == group.id else '' }}>{{ group.name }}</option>{% endfor %}</select></label>
-      <label>Модель<select name="model"><option value="DH-CS4226-24ET-240">Dahua DH-CS4226-24ET-240</option></select></label>
-      <div class="row"><label>IP / имя хоста<input name="host" required maxlength="253" placeholder="192.168.1.20"></label><label>Порт UDP<input name="snmp_port" type="number" min="1" max="65535" value="161" required></label></div>
-      <label>SNMP community (чтение)<input name="community" type="password" autocomplete="new-password" required maxlength="255"></label>
-      <p class="muted">Включите SNMPv2c на коммутаторе и разрешите опрос с сервера мониторинга. Community сохраняется зашифрованным.</p>
-      <details><summary>Параметры опроса</summary><div class="row"><label>Таймаут, с<input name="timeout" type="number" min="0.5" max="5" step="0.5" value="2" required></label><label>Повторных попыток<input name="retries" type="number" min="0" max="2" value="1" required></label></div></details>
-      <label><input name="enabled" type="checkbox" checked>Регулярно опрашивать</label>
-      <p id="sw-create-error" class="err-text sw-error" role="alert"></p>
-      <div class="actions"><button type="submit">Добавить</button><button type="button" class="secondary" id="sw-create-cancel">Отмена</button></div>
-    </form>
-  </div>
-</div>
+<div id="sw-create-modal" class="modal hidden"><div class="modal-card">
+  <h3>Добавить коммутатор</h3>
+  <form id="sw-create-form">
+    <label>Название<input name="name" required maxlength="255"></label>
+    <label>Объект<select name="group_id"><option value="">Без объекта</option>{% for group in groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
+    <label>Модель<select name="model"><option value="DH-CS4226-24ET-240">Dahua DH-CS4226-24ET-240</option></select></label>
+    <div class="row"><label>IP / имя хоста<input name="host" required maxlength="253"></label><label>TCP-порт веб-интерфейса<input name="management_port" type="number" min="1" max="65535" value="80" required></label></div>
+    <label>Таймаут, с<input name="timeout" type="number" min="0.5" max="5" step="0.5" value="2" required></label>
+    <label><input name="enabled" type="checkbox" checked style="width:auto"> Регулярно проверять доступность</label>
+    <p id="sw-create-error" class="err-text"></p>
+    <div class="actions"><button type="submit">Добавить</button><button type="button" class="secondary" id="sw-create-cancel">Отмена</button></div>
+  </form>
+</div></div>
 {% endblock %}
 {% block scripts %}
 <script>
 (() => {
-  const modal = document.getElementById('sw-create-modal');
-  const form = document.getElementById('sw-create-form');
-  const open = document.getElementById('sw-create-open');
-  let busy = false;
-  function close() { if (!busy) { modal.classList.add('hidden'); open.focus(); } }
-  open.addEventListener('click', () => { modal.classList.remove('hidden'); form.elements.name.focus(); });
-  document.getElementById('sw-create-cancel').addEventListener('click', close);
-  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
-  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (busy) return;
-    const values = new FormData(form);
-    const payload = {
-      name: values.get('name').trim(), host: values.get('host').trim(), model: values.get('model').trim(),
-      group_id: values.get('group_id') ? Number(values.get('group_id')) : null,
-      snmp_port: Number(values.get('snmp_port')), snmp_version: '2c', community: values.get('community'),
-      timeout: Number(values.get('timeout')), retries: Number(values.get('retries')), enabled: values.has('enabled'),
-    };
-    const out = document.getElementById('sw-create-error');
-    const submit = form.querySelector('[type=submit]');
-    out.textContent = ''; busy = true;
-    form.querySelectorAll('button').forEach(button => { button.disabled = true; });
-    submit.textContent = 'Сохраняем…';
-    try {
-      const response = await fetch('/api/switches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = Array.isArray(result.detail) ? result.detail.map(item => item.msg).join('; ') : result.detail;
-        throw new Error(typeof detail === 'string' ? detail : `Ошибка сохранения (${response.status})`);
-      }
-      form.elements.community.value = '';
-      location.href = result.id ? `/switches/${result.id}` : '/switches';
-    } catch (error) { out.textContent = error.message || 'Не удалось связаться с сервером.'; }
-    finally { busy = false; submit.textContent = 'Добавить'; form.querySelectorAll('button').forEach(button => { button.disabled = false; }); }
-  });
+  const modal=document.getElementById('sw-create-modal'), form=document.getElementById('sw-create-form');
+  document.getElementById('sw-create-open').onclick=()=>modal.classList.remove('hidden');
+  document.getElementById('sw-create-cancel').onclick=()=>modal.classList.add('hidden');
+  form.onsubmit=async event=>{
+    event.preventDefault(); const values=new FormData(form);
+    const payload={name:values.get('name').trim(),host:values.get('host').trim(),model:values.get('model'),
+      group_id:values.get('group_id')?Number(values.get('group_id')):null,
+      management_port:Number(values.get('management_port')),timeout:Number(values.get('timeout')),enabled:values.has('enabled')};
+    const response=await fetch('/api/switches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok){document.getElementById('sw-create-error').textContent=Array.isArray(result.detail)?result.detail.map(x=>x.msg).join('; '):(result.detail||'Ошибка сохранения');return;}
+    location.href='/switches/'+result.id;
+  };
 })();
 </script>
 {% endblock %}
