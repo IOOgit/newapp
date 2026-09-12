@@ -25,7 +25,6 @@ ACTIONS: dict[str, str] = {
     "poll": "Опрос",
     "sync_time": "Синхронизация времени",
     "archive_check": "Проверка архива (вчера)",
-    "quality_check": "Проверка качества",
     "depth": "Глубина архива",
 }
 
@@ -67,8 +66,6 @@ async def _do(action: str, device_id: int) -> None:
     elif action == "archive_check":
         target = dt.date.today() - dt.timedelta(days=1)
         await archive.check_device_archive(device_id, target)
-    elif action == "quality_check":
-        await quality.check_device_quality(device_id)
     elif action == "depth":
         await archive.measure_device_depth(device_id)
     else:  # pragma: no cover — отсекается в start()

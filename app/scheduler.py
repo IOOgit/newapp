@@ -38,17 +38,6 @@ def start_scheduler() -> None:
         coalesce=True,
         replace_existing=True,
     )
-    if settings.quality_check_minutes > 0:
-        scheduler.add_job(
-            quality.check_quality_all,
-            trigger=IntervalTrigger(minutes=settings.quality_check_minutes),
-            id="quality_check",
-            name="Контроль качества картинки",
-            max_instances=1,
-            coalesce=True,
-            replace_existing=True,
-        )
-
     if settings.recording_check_minutes > 0:
         scheduler.add_job(
             recording.check_recording_all,

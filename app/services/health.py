@@ -195,25 +195,6 @@ def evaluate_device(device: Device, *, now=None, archive_rows=None) -> dict:
     if archive_dates:
         checks["archive"]["checked_at"] = _iso(min(archive_dates))
 
-    checks["quality"] = {"status": "disabled" if not settings.quality_check_minutes else "unavailable",
-                         "checked_at": None, "detail": None}
-    if settings.quality_check_minutes:
-        quality_dates = []
-        for ch in channels:
-            checked = getattr(ch, "quality_checked_at", None)
-            if not checked:
-                continue  # Снимки — необязательная возможность драйвера.
-            quality_dates.append(_utc(checked))
-            checks["quality"]["status"] = "ok"
-            if not _fresh(checked, now, max(120, settings.quality_check_minutes * 60 * 3)):
-                issue("quality", f"Канал {ch.channel_id}: проверка картинки устарела", channel_id=ch.channel_id)
-            elif ch.quality and ch.quality != Quality.OK:
-                labels = {Quality.DARK: "тёмный кадр", Quality.UNIFORM: "однотонный кадр",
-                          Quality.BLURRY: "расфокус", Quality.FROZEN: "зависший кадр", Quality.ERROR: "ошибка снимка"}
-                issue("quality", f"Канал {ch.channel_id}: {labels.get(ch.quality, ch.quality)}", channel_id=ch.channel_id)
-        if quality_dates:
-            checks["quality"]["checked_at"] = _iso(min(quality_dates))
-
     # Индикатор отражает и результат, и свежесть. Сырой результат попытки
     # остаётся в Device.monitoring_checks для диагностики.
     for key, check in checks.items():

@@ -273,12 +273,7 @@ async def archive_depth_now(device_id: int, session: AsyncSession = Depends(get_
 
 @router.post("/devices/{device_id}/quality-check")
 async def quality_check_now(device_id: int, session: AsyncSession = Depends(get_session)):
-    """Проверить качество картинки по всем online-каналам устройства."""
-    device = await crud.get_device(session, device_id)
-    if device is None:
-        raise HTTPException(404, "Устройство не найдено")
-    await quality.check_device_quality(device_id)
-    return {"ok": True}
+    raise HTTPException(410, "Проверка качества картинки отключена")
 
 
 @router.post("/devices/{device_id}/channels/{channel_id}/toggle")

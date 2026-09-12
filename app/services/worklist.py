@@ -93,11 +93,6 @@ async def collect_issues(session: AsyncSession) -> list[dict]:
                         f"Канал {c.channel_id}: нет видео", c.name or "—",
                         channel_id=c.channel_id, since=c.last_status_change)
 
-                if c.quality in _QUALITY_LABEL:
-                    add(f"dev:{d.id}:ch:{c.channel_id}:quality", d, "warning", "quality",
-                        f"Канал {c.channel_id}: {_QUALITY_LABEL[c.quality]}", c.name or "—",
-                        channel_id=c.channel_id, since=c.quality_checked_at)
-
                 r = cov.get((d.id, c.channel_id))
                 if r and c.recording_mode == "continuous" and r.status == ArchiveState.NONE:
                     add(f"dev:{d.id}:ch:{c.channel_id}:archive", d, "critical", "archive",

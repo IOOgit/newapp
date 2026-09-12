@@ -18,7 +18,6 @@
         <button onclick="recheck({{ device.id }})">Перепроверить возможности</button>
         <button onclick="archiveCheck({{ device.id }})">Проверить архив за вчера</button>
         <button onclick="archiveDepth({{ device.id }})">Глубина архива</button>
-        <button onclick="qualityCheck({{ device.id }})">Проверить качество</button>
         <button onclick="syncTime({{ device.id }})">Синхронизировать время</button>
         <button onclick="diag({{ device.id }})">Диагностика</button>
         <button class="danger" onclick="rebootDevice({{ device.id }})">Перезагрузить</button>
@@ -37,7 +36,7 @@
   <div class="chart-head">
     <h3>Состояние NVR <span class="badge {{ {'green':'ok','yellow':'warn','red':'err','gray':'muted'}.get(health.color, 'muted') }}">{{ health.label }}</span></h3>
   </div>
-  {% set check_names = {'connection':'Связь','channels':'Камеры','hdd':'Диски','time':'Время','health':'Железо','recording':'Свежая запись','archive':'Архив','quality':'Качество картинки'} %}
+  {% set check_names = {'connection':'Связь','channels':'Камеры','hdd':'Диски','time':'Время','health':'Железо','recording':'Свежая запись','archive':'Архив'} %}
   {% set check_colors = {'ok':'ok','error':'err','critical':'err','missing':'err','warning':'warn','stale':'warn','time_error':'warn','unknown':'muted','unavailable':'muted','no_data':'muted','event':'muted','disabled':'muted'} %}
   {% set check_labels = {'ok':'норма','error':'ошибка проверки','critical':'проблема','missing':'запись не найдена','warning':'внимание','stale':'данные устарели','time_error':'проверьте часы','unknown':'не проверено','unavailable':'недоступно','no_data':'нет данных','event':'по событию','disabled':'выключено'} %}
   <div class="health-checks">
@@ -91,10 +90,8 @@
 <div class="table-wrap">
 <p class="muted" style="font-size:13px">Свежая запись — последний найденный фрагмент архива. Укажите ожидаемый режим для каждого канала: непрерывно, по событию или без контроля записи. Эта настройка меняет только мониторинг.</p>
 <table class="grid">
-  <thead><tr><th>#</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Свежая запись</th><th>Ожидаемый режим</th><th>Картинка</th><th>Глубина</th><th>Изменён</th><th>Кадр</th><th>Монитор</th></tr></thead>
+  <thead><tr><th>#</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Свежая запись</th><th>Ожидаемый режим</th><th>Глубина</th><th>Изменён</th><th>Кадр</th><th>Монитор</th></tr></thead>
   <tbody>
-  {% set qm = {'ok':'ok','blurry':'warn','dark':'err','uniform':'err','frozen':'err','error':'err'} %}
-  {% set ql = {'ok':'норма','blurry':'расфокус','dark':'тёмный','uniform':'залеплен','frozen':'завис','error':'ошибка'} %}
   {% set recording_colors = {'ok':'ok','missing':'err','error':'warn','time_error':'warn','unknown':'muted','unavailable':'muted','event':'muted','disabled':'muted','stale':'warn'} %}
   {% set recording_labels = {'ok':'запись есть','missing':'нет свежей записи','error':'ошибка проверки','time_error':'проверьте часы NVR','unknown':'не проверено','unavailable':'проверка недоступна','event':'по событию','disabled':'без контроля','stale':'данные устарели'} %}
   {% for c in device.channels|sort(attribute='channel_id') %}
@@ -123,7 +120,6 @@
           <option value="disabled" {{ 'selected' if c.recording_mode == 'disabled' }}>Без контроля</option>
         </select>
       </td>
-      <td>{% if c.quality %}<span class="badge {{ qm.get(c.quality,'muted') }}">{{ ql.get(c.quality, c.quality) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="muted">{% if c.archive_depth_days is not none %}{{ c.archive_depth_days }} дн.{% else %}—{% endif %}</td>
       <td class="muted">{{ c.last_status_change | localtime('%d.%m %H:%M') }}</td>
       <td><button class="mini" onclick="showSnap({{ device.id }},{{ c.channel_id }},this)">📷 кадр</button></td>
@@ -133,7 +129,7 @@
         </button>
       </td>
     </tr>
-  {% else %}<tr><td colspan="11" class="muted">Каналов нет (опросите устройство).</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="10" class="muted">Каналов нет (опросите устройство).</td></tr>{% endfor %}
   </tbody>
 </table>
 </div>

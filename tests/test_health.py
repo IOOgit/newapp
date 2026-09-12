@@ -127,13 +127,15 @@ def test_optional_health_unsupported_is_neutral_but_overheat_is_not(healthy):
     assert evaluate_device(device, now=NOW, archive_rows=rows)["color"] == "red"
 
 
-def test_quality_only_counts_when_enabled_and_measured(healthy, monkeypatch):
+def test_quality_no_longer_affects_health_even_with_old_settings(healthy, monkeypatch):
     device, rows = healthy
     device.channels[0].quality = "frozen"
     device.channels[0].quality_checked_at = NOW
     assert evaluate_device(device, now=NOW, archive_rows=rows)["color"] == "green"
     monkeypatch.setattr(settings, "quality_check_minutes", 5)
-    assert evaluate_device(device, now=NOW, archive_rows=rows)["color"] == "yellow"
+    health = evaluate_device(device, now=NOW, archive_rows=rows)
+    assert health["color"] == "green"
+    assert "quality" not in health["checks"]
 
 
 def test_unreachable_is_critical_even_with_old_healthy_values(healthy):
