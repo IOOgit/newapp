@@ -261,8 +261,9 @@ label { color: color-mix(in srgb, var(--color-text) 78%, transparent); }
 .device-more-actions summary::-webkit-details-marker { display: none; }
 .device-more-menu { position: absolute; z-index: 20; right: 0; top: calc(100% + 6px); width: 260px; padding: 8px; display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow-lg); }
 .device-more-menu button { width: 100%; text-align: left; }
-.health-checks { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 1px; margin: 12px 0; background: var(--line); border: 1px solid var(--line); }
-.health-checks > div { min-width: 0; padding: 10px 12px; background: var(--panel); }
+#monitoring-health { background: var(--color-bg); }
+.health-checks { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 1px; margin: 12px 0; background: transparent; border: 0; }
+.health-checks > div { min-width: 0; padding: 10px 12px; background: transparent; }
 .health-check-time { display: block; max-width: 100%; margin-top: 4px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .health-issues { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
 .health-issues summary { cursor: pointer; color: var(--color-accent); font-weight: 700; }
