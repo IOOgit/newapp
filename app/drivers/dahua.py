@@ -310,8 +310,9 @@ class DahuaClient(NVRClient):
             raise FeatureUnavailable(f"snapshot: HTTP {resp.status_code}")
         return resp.content
 
-    async def sync_time(self) -> None:
-        now = dt.datetime.now().strftime(_DAHUA_TIME_FMT)
+    async def sync_time(self, target: dt.datetime | None = None) -> None:
+        target = target or dt.datetime.now().astimezone()
+        now = target.strftime(_DAHUA_TIME_FMT)
         resp = await self._request(
             "GET", "/cgi-bin/global.cgi",
             params={"action": "setCurrentTime", "time": now},

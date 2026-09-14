@@ -1,6 +1,8 @@
 """REST API: устройства, группы, тест соединения, автоопределение, опрос."""
 from __future__ import annotations
 
+from app.services import timesync
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -236,7 +238,7 @@ async def sync_time(
         raise HTTPException(404, "Устройство не найдено")
     client = build_client(device)
     try:
-        await client.sync_time()
+        await timesync.sync_device(client)
     except NVRError as exc:
         raise HTTPException(502, f"Не удалось синхронизировать время: {exc}")
     await audit.log_action(session, request, "sync_time", target=device.name)
@@ -368,7 +370,7 @@ async def bulk_sync_time(
     for did in ids:
         device = await crud.get_device(session, did)
         try:
-            await build_client(device).sync_time()
+            await timesync.sync_device(build_client(device))
             done += 1
         except NVRError:
             pass

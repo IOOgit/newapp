@@ -239,8 +239,8 @@ class NVRClient(abc.ABC):
         """Возвращает текущий кадр канала (JPEG)."""
         raise FeatureUnavailable("снимок не поддерживается")
 
-    async def sync_time(self) -> None:
-        """Выставляет на устройстве текущее локальное время сервера."""
+    async def sync_time(self, target: dt.datetime | None = None) -> None:
+        """Выставляет переданное время либо время настроенного источника."""
         raise FeatureUnavailable("синхронизация времени не поддерживается")
 
     async def reboot(self) -> None:
