@@ -21,7 +21,7 @@ CAPABILITIES = [
     Capability(
         "monitoring",
         "Мониторинг (дашборд, устройства, TV, история, план, прошивки, хранилище)",
-        ("/tv", "/slideshow", "/history", "/plan", "/firmware", "/calc", "/labels", "/m/",
+        ("/time-settings", "/tv", "/slideshow", "/history", "/plan", "/firmware", "/calc", "/labels", "/m/",
          "/devices/", "/api/groups", "/api/devices", "/api/summary", "/api/events",
          "/api/alerts", "/api/archive", "/api/plan", "/plan/image", "/api/bulk",
          "/api/notes", "/api/metrics", "/api/monitoring", "/switches", "/api/switches"),

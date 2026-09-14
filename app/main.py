@@ -15,7 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import (
     auth, backup_api, buses, checkin, dashboard, devices, monitoring, plan, users_api,
-    worklist, switches,
+    worklist, switches, timesync,
 )
 from app.config import settings
 from app.database import init_db
@@ -39,6 +39,8 @@ async def lifespan(app: FastAPI):
     await checkin_ingest.load_clips_dir()      # папка клипов из настроек
     start_scheduler()
     await configure_checkin_job()
+    from app.scheduler import configure_time_sync_job
+    await configure_time_sync_job()
     bot_task = asyncio.create_task(bot.run_bot())
     log.info("NVR Monitor запущен (mock_mode=%s)", settings.mock_mode)
     try:
@@ -113,6 +115,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(devices.router)
 app.include_router(monitoring.router)
+app.include_router(timesync.router)
 app.include_router(switches.router)
 app.include_router(worklist.router)
 app.include_router(plan.router)

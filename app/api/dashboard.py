@@ -338,3 +338,8 @@ async def device_page(
             "now": dt.datetime.utcnow(),
         },
     )
+
+
+@router.get("/time-settings", response_class=HTMLResponse)
+async def time_settings(request: Request):
+    return templates.TemplateResponse(request, "time_settings.html", {})

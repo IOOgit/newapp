@@ -131,3 +131,20 @@ def reschedule_checkin_job(hour: int, minute: int) -> None:
 def shutdown_scheduler() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
+
+async def configure_time_sync_job() -> None:
+    from app.services.timesync import load_settings, scheduled_sync
+
+    config = await load_settings()
+    if scheduler.get_job("time_sync"):
+        scheduler.remove_job("time_sync")
+    if config.enabled:
+        hour, minute = map(int, config.time.split(":"))
+        scheduler.add_job(
+            scheduled_sync,
+            trigger=CronTrigger(hour=hour, minute=minute, timezone=config.timezone),
+            id="time_sync", name="Синхронизация NVR по NTP",
+            max_instances=1, coalesce=True, misfire_grace_time=300,
+            replace_existing=True,
+        )
