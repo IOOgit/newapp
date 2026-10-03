@@ -2,7 +2,7 @@
 {% from "switch_macros.html" import snmp_status, watts %}
 {% block title %}Коммутаторы — NVR Monitor{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/switches.css?v=1">
+<link rel="stylesheet" href="/static/switches.css?v={{ app_version }}">
 {% set status_classes = {'green':'ok', 'yellow':'warn', 'red':'err', 'gray':'muted'} %}
 <a href="/" class="muted">← к дашборду</a>
 <div class="device-head"><h1>Коммутаторы камер</h1><div class="device-actions"><button type="button" data-open="sw-form-modal">+ Коммутатор</button></div></div>

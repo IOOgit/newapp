@@ -110,10 +110,11 @@
 </section>
 
 {% if switches %}
+<link rel="stylesheet" href="/static/switches.css?v={{ app_version }}">
 <div class="chart-card" style="margin-top:22px">
   <div class="chart-head"><h3>Коммутаторы · {{ switches|length }}</h3><a href="/switches" class="sub">Все коммутаторы →</a></div>
-  <div class="kpi-legend">
-  {% for sw in switches[:8] %}<a href="/switches/{{ sw.id }}"><span class="dot {{ sw.health.state }}"></span> {{ sw.name }} · {{ sw.health.label }} · SNMP: {{ 'OK' if sw.telemetry_available else 'не настроен' if not sw.snmp_enabled else 'нет свежих данных' }}{% if sw.summary.ports_total is not none %} · {{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }}/{{ sw.summary.ports_total }} Up{% endif %}</a>{% endfor %}
+  <div class="sw-summary-list">
+  {% for sw in switches[:8] %}<a class="sw-summary-link" href="/switches/{{ sw.id }}"><span class="dot {{ sw.health.state }}" aria-hidden="true"></span><span class="sw-summary-copy">{{ sw.name }} · {{ sw.health.label }} · SNMP: {{ 'OK' if sw.telemetry_available else 'не настроен' if not sw.snmp_enabled else 'нет свежих данных' }}{% if sw.summary.ports_total is not none %} · {{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }}/{{ sw.summary.ports_total }} Up{% endif %}</span></a>{% endfor %}
   </div>
 </div>
 {% endif %}

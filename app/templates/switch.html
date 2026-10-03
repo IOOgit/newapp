@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% from "switch_macros.html" import snmp_status, watts %}
+{% from "switch_macros.html" import snmp_status, watts, port_socket %}
 {% block title %}{{ switch.name }} — Коммутатор{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/switches.css?v=1">
+<link rel="stylesheet" href="/static/switches.css?v={{ app_version }}">
 {% set sw = switch %}{% set status_classes={'green':'ok','yellow':'warn','red':'err','gray':'muted'} %}
 <a href="/switches" class="muted">← к коммутаторам</a>
 <div class="device-head"><h1>{{ sw.name }}</h1><div class="device-actions">
@@ -32,11 +32,22 @@
 </div>
 </section>
 <section class="sw-panel" id="sw-ports" role="tabpanel" aria-labelledby="sw-tab-ports" hidden>
-<p class="muted">{{ 'Выберите порт для подробностей и привязки камеры.' if sw.telemetry_available else 'Нет свежей телеметрии портов. Проверьте настройки SNMP.' }}</p>
-<div class="sw-port-grid">
-{% for port in sw.ports if port.present and port.physical %}
-<button class="sw-port sw-{{ port.health.state }}" data-port="{{ port.id }}" title="{{ port.alias or port.description or '' }} — {{ port.health.label }}"><strong>{{ port.name or port.description or 'ifIndex ' ~ port.if_index }}</strong><small>{{ port.health.label }}</small>{% if sw.telemetry_available %}<small>{{ port.speed_mbps if port.speed_mbps is not none else '—' }} Mbit/s</small>{% endif %}</button>
-{% endfor %}
+{% set physical_ports = sw.ports|selectattr('present')|selectattr('physical')|list %}
+<div class="sw-faceplate">
+  <div class="sw-faceplate-head">
+    <div><span class="sw-faceplate-eyebrow">{{ sw.detected_model or sw.model or 'Коммутатор' }}</span><h3>Панель портов</h3></div>
+    <div class="sw-faceplate-count"><strong>{{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }}</strong><span>активных <b>/ {{ physical_ports|length }}</b></span></div>
+  </div>
+  <div class="sw-port-legend" aria-label="Состояния портов">
+    <span><i class="sw-led-live" aria-hidden="true"></i>Линк поднят</span>
+    <span><i class="sw-led-warning" aria-hidden="true"></i>Ошибки / потери</span>
+    <span><i class="sw-led-fault" aria-hidden="true"></i>Авария</span>
+    <span><i class="sw-led-idle" aria-hidden="true"></i>Нет линка / данных</span>
+  </div>
+  <div class="sw-port-grid">
+  {% for port in physical_ports %}{{ port_socket(port, sw.telemetry_available) }}{% else %}<p class="sw-port-empty">Физические порты пока не обнаружены. Проверьте SNMP и выполните опрос.</p>{% endfor %}
+  </div>
+  <div class="sw-faceplate-foot"><span>{{ 'Выберите порт для подробностей и привязки камеры.' if sw.telemetry_available else 'Нет свежей телеметрии. Проверьте настройки SNMP.' }}</span><span>Схематичное расположение</span></div>
 </div>
 <div class="table-wrap"><table class="grid"><thead><tr><th>Интерфейс</th><th>Описание / alias</th><th>Линк</th><th>Скорость</th><th>RX / TX</th><th>Ошибки / потери</th></tr></thead><tbody>
 {% for port in sw.ports %}<tr><td><button data-port="{{ port.id }}">{{ port.name or 'ifIndex ' ~ port.if_index }}</button><div class="muted">ifIndex {{ port.if_index }} · {{ 'физический' if port.physical else 'логический / тип не определён' }}{{ ' · отсутствует' if not port.present else '' }}</div></td><td>{{ port.alias or port.description or '—' }}</td><td><span class="badge {{ status_classes[port.health.state] }}">{{ port.health.label }}</span></td><td>{{ port.speed_mbps if sw.telemetry_available and port.present and port.speed_mbps is not none else '—' }} Mbit/s</td><td>↓ {{ port.in_bps|bitrate }}<br>↑ {{ port.out_bps|bitrate }}</td><td>RX {{ port.in_error_delta if port.in_error_delta is not none else '—' }} / {{ port.in_discard_delta if port.in_discard_delta is not none else '—' }}<br>TX {{ port.out_error_delta if port.out_error_delta is not none else '—' }} / {{ port.out_discard_delta if port.out_discard_delta is not none else '—' }}</td></tr>{% else %}<tr><td colspan="6" class="muted">Список интерфейсов пока не получен.</td></tr>{% endfor %}
