@@ -1,4 +1,4 @@
-"""DH-CS4226-24ET-240: только честная проверка TCP-доступности."""
+"""Совместимость TCP-мониторинга и универсальные настройки SNMP."""
 from __future__ import annotations
 
 import datetime as dt
@@ -15,7 +15,7 @@ NOW = dt.datetime(2026, 9, 11, 12, 0, tzinfo=dt.timezone.utc)
 def _switch(**changes):
     values = dict(
         name="Свитч камер", host="192.0.2.10", model="DH-CS4226-24ET-240",
-        snmp_port=80, snmp_version="none", community_enc="", retries=0,
+        management_port=80, snmp_port=161, snmp_version="2c", snmp_enabled=False, community_enc="", retries=0,
         enabled=True, reachable=True, last_attempt_at=NOW, last_seen=NOW,
         capabilities={"reachability": "tcp", "interfaces": "unavailable"}, ports=[],
     )
@@ -28,12 +28,12 @@ def _client():
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
 
-def test_reachable_switch_is_never_green_without_port_telemetry():
+def test_tcp_online_is_independent_from_unconfigured_snmp():
     from app.services.switches import switch_health
     health = switch_health(_switch(), now=NOW)
-    assert health["state"] == "yellow"
-    assert "без телеметрии" in health["label"]
-    assert "PoE" in health["reasons"][0]
+    assert health["state"] == "green"
+    assert health["label"] == "Онлайн"
+    assert not health["reasons"]
 
 
 def test_unreachable_and_stale_states_are_explicit():
@@ -55,7 +55,7 @@ async def test_poll_checks_management_tcp_only(db, monkeypatch):
         assert await switches.poll_switch(session, switch, probe=probe) is True
         probe.assert_awaited_once_with("192.0.2.10", 80, switch.timeout)
         assert switch.capabilities["interfaces"] == "unavailable"
-        assert switches.switch_health(switch, now=NOW)["state"] == "yellow"
+        assert switches.switch_health(switch, now=NOW)["state"] == "green"
 
 
 async def test_failed_tcp_probe_marks_switch_unreachable(db):
@@ -83,20 +83,21 @@ async def test_api_accepts_no_snmp_credentials_and_hides_legacy_fields(db):
         assert body["monitoring_method"] == "tcp"
         assert body["telemetry_available"] is False
         assert "community" not in body
-        assert "snmp_port" not in body
-        assert "snmp_version" not in body
+        assert body["snmp_port"] == 161
+        assert body["snmp_enabled"] is False
+        assert body["snmp_version"] == "2c"
 
 
-async def test_api_rejects_snmp_fields_for_this_model(db):
+async def test_api_accepts_snmp_fields_for_any_model(db):
     async with _client() as client:
         response = await client.post("/api/switches", json={
             "name": "Шкаф 1", "host": "192.0.2.20",
             "model": "DH-CS4226-24ET-240", "snmp_port": 161, "community": "public",
         })
-        assert response.status_code == 422
+        assert response.status_code == 201
 
 
-async def test_switch_pages_state_model_limit(db):
+async def test_switch_pages_use_common_theme_without_model_claims(db):
     async with _client() as client:
         created = await client.post("/api/switches", json={
             "name": "Шкаф 1", "host": "192.0.2.20",
@@ -105,6 +106,10 @@ async def test_switch_pages_state_model_limit(db):
         switch_id = created.json()["id"]
         listing = await client.get("/switches")
         card = await client.get(f"/switches/{switch_id}")
-        assert "не поддерживает SNMP" in listing.text
-        assert "SNMP отсутствует" in card.text
+        assert listing.status_code == card.status_code == 200
+        assert "не поддерживает SNMP" not in listing.text
+        assert "SNMP отсутствует" not in card.text
+        assert "SNMP: не настроен" in card.text
+        assert "/static/style.css" in card.text
+        assert "Проверить SNMP" in listing.text
         assert "TCP-порт веб-интерфейса" in listing.text

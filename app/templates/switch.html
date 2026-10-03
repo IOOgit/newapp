@@ -1,42 +1,71 @@
 {% extends "base.html" %}
+{% from "switch_macros.html" import snmp_status, watts %}
 {% block title %}{{ switch.name }} — Коммутатор{% endblock %}
 {% block content %}
-{% set status_classes={'green':'ok','yellow':'warn','red':'err','gray':'muted'} %}
+<link rel="stylesheet" href="/static/switches.css?v=1">
+{% set sw = switch %}{% set status_classes={'green':'ok','yellow':'warn','red':'err','gray':'muted'} %}
 <a href="/switches" class="muted">← к коммутаторам</a>
-<div class="device-head"><h1>{{ switch.name }}</h1><div class="device-actions">
-  <button id="sw-poll">Проверить сейчас</button><button class="secondary" id="sw-edit-open">Настройки</button><button class="danger" id="sw-delete">Удалить</button>
+<div class="device-head"><h1>{{ sw.name }}</h1><div class="device-actions">
+<button data-switch-poll="{{ sw.id }}" {{ 'disabled' if not sw.enabled else '' }}>Проверить сейчас</button><button class="secondary" data-open="sw-form-modal">Настройки</button><button class="danger" data-switch-delete="{{ sw.id }}">Удалить</button>
 </div></div>
-<div id="sw-action-error" class="err-text"></div>
-<div class="chart-card">
-  <span class="badge {{ status_classes.get(switch.health.state,'muted') }}">{{ switch.health.label }}</span>
-  {% for reason in switch.health.reasons %}<p>{{ reason }}</p>{% endfor %}
+<p id="sw-action-result" class="err-text" role="status" aria-live="polite"></p>
+<div class="bulkbar"><span class="badge {{ status_classes[sw.health.state] }}">{{ sw.health.label }}</span>{{ snmp_status(sw) }}<span class="muted">{{ sw.host }} · {{ sw.model or sw.detected_model or 'Модель не определена' }}</span></div>
+<nav class="sw-tabs" role="tablist" aria-label="Информация о коммутаторе">
+{% for key,label in [('overview','Обзор'),('ports','Порты'),('poe','PoE'),('snmp','SNMP'),('events','События')] %}{% if key != 'poe' or sw.capabilities.get('poe') == 'available' %}<button type="button" role="tab" id="sw-tab-{{ key }}" data-sw-tab="{{ key }}" aria-controls="sw-{{ key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ '0' if loop.first else '-1' }}">{{ label }}</button>{% endif %}{% endfor %}
+</nav>
+<section class="sw-panel" id="sw-overview" role="tabpanel" aria-labelledby="sw-tab-overview">
+<div class="cards">
+<div class="card"><span class="num">{{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }} / {{ sw.summary.ports_total if sw.summary.ports_total is not none else '—' }}</span><span>Порты Up / всего</span></div>
+<div class="card"><span class="num">{{ sw.summary.in_bps|bitrate }}</span><span>Входящий · сумма портов</span></div>
+<div class="card"><span class="num">{{ sw.summary.out_bps|bitrate }}</span><span>Исходящий · сумма портов</span></div>
+<div class="card"><span class="num">{{ watts(sw.summary.poe_used_w) }} / {{ watts(sw.summary.poe_budget_w) }}</span><span>PoE / бюджет</span></div>
 </div>
-<section class="info-grid" style="margin-top:16px">
-  <div><b>Адрес:</b> {{ switch.host }}:{{ switch.management_port }}</div><div><b>Модель:</b> {{ switch.model }}</div>
-  <div><b>Метод:</b> TCP-подключение к веб-интерфейсу</div><div><b>Последняя попытка:</b> {{ switch.last_attempt_at|localtime('%d.%m.%Y %H:%M:%S') }}</div>
-  <div><b>Последняя успешная:</b> {{ switch.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}</div>
+<section class="info-grid">
+<div><b>Производитель</b>{{ sw.vendor or '—' }}</div><div><b>Модель / прошивка</b>{{ sw.detected_model or sw.model or '—' }} / {{ sw.firmware or '—' }}</div>
+<div><b>sysName</b>{{ sw.sys_name or '—' }}</div><div><b>Время работы</b>{{ (sw.uptime_ticks if sw.telemetry_available else none)|uptime }}</div>
+<div><b>Доступность проверена</b>{{ sw.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}</div><div><b>SNMP получен</b>{{ sw.snmp_last_seen|localtime('%d.%m.%Y %H:%M:%S') }}</div>
+<div><b>Ошибок за интервал</b>{{ sw.summary.errors if sw.summary.errors is not none else '—' }}</div><div><b>Активных PoE</b>{{ sw.summary.poe_active if sw.summary.poe_active is not none else '—' }}</div>
+{% for sensor in sw.sensors if sensor.kind == 8 %}<div><b>Температура · датчик {{ sensor.index }}</b>{{ '%.1f'|format(sensor.value) }} °C</div>{% endfor %}
 </section>
-<div class="err-plate" style="margin-top:18px"><span><b>Ограничение модели:</b> SNMP отсутствует. Порты, PoE, трафик и ошибки недоступны для мониторинга. Доступность устройства не означает исправность камер или PoE.</span></div>
-
-<div id="sw-edit-modal" class="modal hidden"><div class="modal-card"><h3>Настройки</h3><form id="sw-edit-form">
-  <label>Название<input name="name" value="{{ switch.name }}" required></label>
-  <label>IP / имя хоста<input name="host" value="{{ switch.host }}" required></label>
-  <label>TCP-порт веб-интерфейса<input name="management_port" type="number" min="1" max="65535" value="{{ switch.management_port }}" required></label>
-  <label>Таймаут, с<input name="timeout" type="number" min="0.5" max="5" step="0.5" value="{{ switch.timeout }}"></label>
-  <label><input name="enabled" type="checkbox" {{ 'checked' if switch.enabled else '' }} style="width:auto"> Регулярно проверять</label>
-  <p class="err-text"></p><div class="actions"><button type="submit">Сохранить</button><button type="button" class="secondary" id="sw-edit-cancel">Отмена</button></div>
+<div class="chart-card sw-section"><div class="chart-head"><h3>Трафик за 24 часа</h3><span class="sub">Сумма физических портов</span></div>
+{% if history %}<svg id="sw-history-chart" class="sw-spark" viewBox="0 0 800 80" role="img" aria-label="История входящего и исходящего трафика"></svg><div class="sw-legend"><span>↓ RX — тёмная линия</span><span>↑ TX — стальная линия</span><span>Пропуски — нет данных</span></div>{% else %}<p class="muted">История появится после фонового опроса.</p>{% endif %}
+</div>
+</section>
+<section class="sw-panel" id="sw-ports" role="tabpanel" aria-labelledby="sw-tab-ports" hidden>
+<p class="muted">{{ 'Выберите порт для подробностей и привязки камеры.' if sw.telemetry_available else 'Нет свежей телеметрии портов. Проверьте настройки SNMP.' }}</p>
+<div class="sw-port-grid">
+{% for port in sw.ports if port.present and port.physical %}
+<button class="sw-port sw-{{ port.health.state }}" data-port="{{ port.id }}" title="{{ port.alias or port.description or '' }} — {{ port.health.label }}"><strong>{{ port.name or port.description or 'ifIndex ' ~ port.if_index }}</strong><small>{{ port.health.label }}</small>{% if sw.telemetry_available %}<small>{{ port.speed_mbps if port.speed_mbps is not none else '—' }} Mbit/s</small>{% endif %}</button>
+{% endfor %}
+</div>
+<div class="table-wrap"><table class="grid"><thead><tr><th>Интерфейс</th><th>Описание / alias</th><th>Линк</th><th>Скорость</th><th>RX / TX</th><th>Ошибки / потери</th></tr></thead><tbody>
+{% for port in sw.ports %}<tr><td><button data-port="{{ port.id }}">{{ port.name or 'ifIndex ' ~ port.if_index }}</button><div class="muted">ifIndex {{ port.if_index }} · {{ 'физический' if port.physical else 'логический / тип не определён' }}{{ ' · отсутствует' if not port.present else '' }}</div></td><td>{{ port.alias or port.description or '—' }}</td><td><span class="badge {{ status_classes[port.health.state] }}">{{ port.health.label }}</span></td><td>{{ port.speed_mbps if sw.telemetry_available and port.present and port.speed_mbps is not none else '—' }} Mbit/s</td><td>↓ {{ port.in_bps|bitrate }}<br>↑ {{ port.out_bps|bitrate }}</td><td>RX {{ port.in_error_delta if port.in_error_delta is not none else '—' }} / {{ port.in_discard_delta if port.in_discard_delta is not none else '—' }}<br>TX {{ port.out_error_delta if port.out_error_delta is not none else '—' }} / {{ port.out_discard_delta if port.out_discard_delta is not none else '—' }}</td></tr>{% else %}<tr><td colspan="6" class="muted">Список интерфейсов пока не получен.</td></tr>{% endfor %}
+</tbody></table></div>
+</section>
+<section class="sw-panel" id="sw-poe" role="tabpanel" aria-labelledby="sw-tab-poe" hidden>
+<div class="info-grid"><div><b>Потребление / бюджет</b>{{ watts(sw.summary.poe_used_w) }} / {{ watts(sw.summary.poe_budget_w) }}</div><div><b>Активных портов</b>{{ sw.summary.poe_active if sw.summary.poe_active is not none else '—' }}</div></div>
+<p class="muted">Индекс PoE — группа и порт. Привязка к сетевому интерфейсу задаётся в карточке порта. Мощность показывается только при наличии измерения.</p>
+<div class="table-wrap"><table class="grid"><thead><tr><th>Индекс PoE</th><th>Разрешён</th><th>Питание</th><th>Потребление</th><th>Описание</th></tr></thead><tbody>
+{% for index,p in sw.poe_ports.items() %}<tr><td>{{ index }}</td><td>{{ 'Да' if p.enabled else 'Нет' if p.enabled is not none else '—' }}</td><td>{{ {1:'Выключено',2:'Поиск нагрузки',3:'Подаётся',4:'Ошибка',5:'Тестирование',6:'Неисправность'}.get(p.status,'—') }}</td><td>{{ watts(p.power_w) }}</td><td>{{ p.description or '—' }}</td></tr>{% else %}<tr><td colspan="5" class="muted">Нет свежих данных PoE.</td></tr>{% endfor %}
+</tbody></table></div>
+</section>
+<section class="sw-panel" id="sw-snmp" role="tabpanel" aria-labelledby="sw-tab-snmp" hidden>
+{{ snmp_status(sw) }}{% if sw.snmp_error %}<p class="err-text">{{ sw.snmp_error }}</p>{% endif %}
+<div class="info-grid"><div><b>Версия / UDP-порт</b>v{{ sw.snmp_version }} / {{ sw.snmp_port }}</div><div><b>sysObjectID</b><span class="sw-description">{{ sw.sys_object_id or '—' }}</span></div><div><b>Последняя ошибка</b>{{ sw.snmp_error_at|localtime('%d.%m.%Y %H:%M:%S') }}</div><div><b>Возможности проверены</b>{{ sw.discovery_at|localtime('%d.%m.%Y %H:%M:%S') }}</div></div>
+<h3>Описание устройства</h3><p class="sw-description">{{ sw.sys_descr or '—' }}</p>
+<h3>Возможности по ответу агента</h3><div class="sw-legend">{% for key,label in [('interfaces','Интерфейсы'),('if_hc_counters','64-bit counters'),('poe','PoE'),('temperature','Температура'),('fan','Вентиляторы'),('power_supply','Блоки питания'),('lldp','LLDP'),('vlans','VLAN'),('mac_table','MAC-таблица')] %}<span>{{ label }}: {{ {'available':'получены данные','unavailable':'нет данных','unknown':'не проверено'}.get(sw.capabilities.get(key),'не проверено') }}</span>{% endfor %}</div>
+</section>
+<section class="sw-panel" id="sw-events" role="tabpanel" aria-labelledby="sw-tab-events" hidden>
+<div class="table-wrap"><table class="grid"><thead><tr><th>Время</th><th>Событие</th></tr></thead><tbody>{% for event in events %}<tr><td>{{ event.created_at|localtime('%d.%m.%Y %H:%M:%S') }}</td><td>{{ event.message }}</td></tr>{% else %}<tr><td colspan="2" class="muted">Изменений состояния пока нет.</td></tr>{% endfor %}</tbody></table></div>
+</section>
+<div id="sw-form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sw-form-title"><div class="modal-card"><h3 id="sw-form-title">Настройки коммутатора</h3><form data-switch-form data-switch-id="{{ sw.id }}">{% include "switch_form.html" %}</form></div></div>
+<div id="sw-port-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sw-port-title"><div class="modal-card"><h3 id="sw-port-title">Порт</h3><dl id="sw-port-details" class="sw-details"></dl><form id="sw-port-form">
+<label class="sw-check"><input type="checkbox" name="expected_up"> Ожидается активный линк</label>
+<label>Камера<select name="channel_ref_id"><option value="">Без привязки</option>{% for channel in channels %}<option value="{{ channel.id }}">{{ channel.device_name }} · {{ channel.channel_index }} · {{ channel.name }}</option>{% endfor %}</select></label>
+<label>Индекс PoE<select name="poe_index"><option value="">Без привязки</option>{% for index in sw.poe_ports %}<option value="{{ index }}">{{ index }}</option>{% endfor %}</select></label>
+<p class="err-text" role="alert"></p><div class="actions"><button type="submit">Сохранить привязку</button><button type="button" class="secondary" data-close>Закрыть</button></div>
 </form></div></div>
+<script type="application/json" id="sw-data">{{ sw_json|tojson }}</script>
+<script type="application/json" id="sw-history-data">{{ history_json|tojson }}</script>
 {% endblock %}
-{% block scripts %}
-<script>
-(() => {
- const id={{ switch.id }}, out=document.getElementById('sw-action-error'), modal=document.getElementById('sw-edit-modal'), form=document.getElementById('sw-edit-form');
- async function call(path,method,payload){const r=await fetch(path,{method,headers:payload?{'Content-Type':'application/json'}:{},body:payload?JSON.stringify(payload):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Ошибка операции');return j;}
- document.getElementById('sw-poll').onclick=async()=>{try{await call('/api/switches/'+id+'/poll','POST');location.reload();}catch(e){out.textContent=e.message;}};
- document.getElementById('sw-delete').onclick=async()=>{if(confirm('Удалить коммутатор из мониторинга?')){await call('/api/switches/'+id,'DELETE');location.href='/switches';}};
- document.getElementById('sw-edit-open').onclick=()=>modal.classList.remove('hidden');
- document.getElementById('sw-edit-cancel').onclick=()=>modal.classList.add('hidden');
- form.onsubmit=async event=>{event.preventDefault();const v=new FormData(form),p={name:v.get('name').trim(),host:v.get('host').trim(),management_port:Number(v.get('management_port')),timeout:Number(v.get('timeout')),enabled:v.has('enabled')};try{await call('/api/switches/'+id,'PUT',p);location.reload();}catch(e){form.querySelector('.err-text').textContent=e.message;}};
-})();
-</script>
-{% endblock %}
+{% block scripts %}<script src="/static/switches.js?v=1"></script>{% endblock %}

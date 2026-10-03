@@ -68,6 +68,12 @@ async def import_data(session: AsyncSession, data: dict) -> dict:
         rows = tables.get(m.__tablename__, [])
         for row in rows:
             kwargs = {c.name: _dec(c, row.get(c.name)) for c in m.__table__.columns if c.name in row}
+            if m is NetworkSwitch and "management_port" not in row:
+                legacy_tcp = row.get("snmp_version") == "none"
+                kwargs["management_port"] = row.get("snmp_port", 80) if legacy_tcp else 80
+                kwargs["snmp_enabled"] = not legacy_tcp and bool(row.get("community_enc"))
+                if legacy_tcp:
+                    kwargs["snmp_port"], kwargs["snmp_version"] = 161, "2c"
             session.add(m(**kwargs))
         counts[m.__tablename__] = len(rows)
     await session.commit()

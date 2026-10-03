@@ -35,6 +35,8 @@ templates.env.globals["device_health"] = _device_health
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, session: AsyncSession = Depends(get_session)):
+    from app.api.switches import _list as list_switches
+    switches = await list_switches(session)
     devices = await crud.list_devices(session)
     groups = {g.id: g for g in (await session.execute(select(Group))).scalars()}
     stats = await summary(session)
@@ -61,6 +63,7 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)):
             "devices": devices,
             "groups": groups,
             "stats": stats,
+            "switches": switches,
             "health_by_id": health_by_id,
             "events": events,
             "archive": archive,

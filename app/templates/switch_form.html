@@ -1,0 +1,15 @@
+<label>Название<input name="name" value="{{ sw.name|default('') }}" required maxlength="255"></label>
+<label>Объект<select name="group_id"><option value="">Без объекта</option>{% for group in groups %}<option value="{{ group.id }}" {{ 'selected' if sw.group_id|default(none) == group.id else '' }}>{{ group.name }}</option>{% endfor %}</select></label>
+<label>Модель<input name="model" value="{{ sw.model|default('') }}" maxlength="128" placeholder="Определится при опросе, если доступна"></label>
+<div class="row"><label>IP / имя хоста<input name="host" value="{{ sw.host|default('') }}" required maxlength="253"></label><label>TCP-порт веб-интерфейса<input name="management_port" type="number" min="1" max="65535" value="{{ sw.management_port|default(80) }}" required></label></div>
+<label class="sw-check"><input name="enabled" type="checkbox" {{ 'checked' if sw.enabled|default(true) else '' }}> Регулярный мониторинг</label>
+<fieldset class="sw-snmp-fields"><legend>SNMP</legend>
+<label class="sw-check"><input name="snmp_enabled" type="checkbox" {{ 'checked' if sw.snmp_enabled|default(false) else '' }}> Включить SNMP</label>
+<div class="row"><label>Версия<select name="snmp_version"><option value="2c" {{ 'selected' if sw.snmp_version|default('2c') == '2c' else '' }}>v2c</option><option value="1" {{ 'selected' if sw.snmp_version|default('2c') == '1' else '' }}>v1</option></select></label><label>UDP-порт<input name="snmp_port" type="number" min="1" max="65535" value="{{ sw.snmp_port|default(161) }}" required></label></div>
+<label>Community<input name="community" type="password" autocomplete="new-password" maxlength="255" placeholder="{{ 'Сохранена · пустое поле — без изменений' if sw.community_configured|default(false) else 'Community только для чтения' }}"></label>
+<div class="row"><label>Таймаут, с<input name="timeout" type="number" min="0.5" max="5" step="0.5" value="{{ sw.timeout|default(2) }}" required></label><label>Повторные попытки<input name="retries" type="number" min="0" max="2" value="{{ sw.retries|default(1) }}" required></label></div>
+<button type="button" data-snmp-probe>Проверить SNMP</button>
+<pre class="test-result" data-probe-result role="status" aria-live="polite"></pre>
+</fieldset>
+<p class="err-text" role="alert"></p>
+<div class="actions"><button type="submit">{{ 'Сохранить' if sw.id|default(none) else 'Добавить' }}</button><button type="button" class="secondary" data-close>Отмена</button></div>

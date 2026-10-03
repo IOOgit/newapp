@@ -109,6 +109,15 @@
   </div>
 </section>
 
+{% if switches %}
+<div class="chart-card" style="margin-top:22px">
+  <div class="chart-head"><h3>Коммутаторы · {{ switches|length }}</h3><a href="/switches" class="sub">Все коммутаторы →</a></div>
+  <div class="kpi-legend">
+  {% for sw in switches[:8] %}<a href="/switches/{{ sw.id }}"><span class="dot {{ sw.health.state }}"></span> {{ sw.name }} · {{ sw.health.label }} · SNMP: {{ 'OK' if sw.telemetry_available else 'не настроен' if not sw.snmp_enabled else 'нет свежих данных' }}{% if sw.summary.ports_total is not none %} · {{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }}/{{ sw.summary.ports_total }} Up{% endif %}</a>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {# Панель «Парк · N NVR» — изометрическая стойка (строит iso.js из /api/devices + /api/worklist) #}
 <div class="blueprint rack-panel" id="side-rack" hidden>{{ corners() }}
   <div style="flex:none">

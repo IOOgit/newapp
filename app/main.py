@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         shutdown_scheduler()
+        from app.services.switches import stop_jobs
+        await stop_jobs()
         bot_task.cancel()
 
 

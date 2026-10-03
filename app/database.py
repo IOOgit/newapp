@@ -44,6 +44,20 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 # Лёгкие миграции: новые колонки, которые create_all НЕ добавит к уже
 # существующим таблицам. (table, column, DDL-тип). Без Alembic для простоты.
 _NEW_COLUMNS = [
+    ("network_switches", "management_port", "INTEGER DEFAULT 80"),
+    ("network_switches", "snmp_enabled", "BOOLEAN DEFAULT FALSE"),
+    ("network_switches", "snmp_status", "VARCHAR(16) DEFAULT 'unknown'"),
+    ("network_switches", "snmp_last_seen", "TIMESTAMP"),
+    ("network_switches", "snmp_error_at", "TIMESTAMP"),
+    ("network_switches", "snmp_error", "TEXT"),
+    ("network_switches", "discovery_at", "TIMESTAMP"),
+    ("network_switches", "vendor", "VARCHAR(128)"),
+    ("network_switches", "detected_model", "VARCHAR(255)"),
+    ("network_switches", "firmware", "VARCHAR(255)"),
+    ("network_switches", "inventory", "JSON DEFAULT '{}'"),
+    ("switch_ports", "mac_address", "VARCHAR(64)"),
+    ("switch_ports", "if_type", "INTEGER"),
+    ("switch_ports", "physical", "BOOLEAN DEFAULT FALSE"),
     ("devices", "monitoring_checks", "JSON DEFAULT '{}'"),
     ("hdds", "raw_status", "VARCHAR(128)"),
     ("hdds", "present", "BOOLEAN DEFAULT TRUE"),
@@ -110,6 +124,8 @@ def _lightweight_migrate(sync_conn) -> None:
     log = logging.getLogger("nvrmon.migrate")
     insp = inspect(sync_conn)
     tables = set(insp.get_table_names())
+    legacy_switch_ports = ("network_switches" in tables and "management_port" not in
+                           {c["name"] for c in insp.get_columns("network_switches")})
     for table, column, ddl in _NEW_COLUMNS:
         if table not in tables:
             continue
@@ -122,15 +138,15 @@ def _lightweight_migrate(sync_conn) -> None:
                     sync_conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {ddl}'))
             except Exception as exc:  # noqa: BLE001
                 log.warning("Миграция %s.%s пропущена: %s", table, column, exc)
-    # Ранее эта модель была ошибочно заведена как SNMP-устройство. Исправляем
-    # существующие записи один раз; snmp_port остаётся физическим именем колонки,
-    # но теперь хранит TCP-порт веб-интерфейса.
-    if "network_switches" in tables:
+    # Только при переходе со старой схемы: разделяем TCP и UDP без проверки модели.
+    # Старые SNMP-записи и их зашифрованные секреты сохраняются.
+    if legacy_switch_ports:
         sync_conn.execute(text(
-            "UPDATE network_switches SET snmp_port=80, snmp_version='none', "
-            "community_enc='', retries=0, reachable=FALSE, last_error="
-            "'Метод мониторинга изменён; требуется проверка TCP-доступности' "
-            "WHERE model='DH-CS4226-24ET-240' AND snmp_version!='none'"
+            "UPDATE network_switches SET management_port=CASE WHEN snmp_version='none' "
+            "THEN snmp_port ELSE 80 END, snmp_enabled=CASE WHEN snmp_version IN ('1','2c') "
+            "AND community_enc!='' THEN TRUE ELSE FALSE END, "
+            "snmp_port=CASE WHEN snmp_version='none' THEN 161 ELSE snmp_port END, "
+            "snmp_version=CASE WHEN snmp_version='none' THEN '2c' ELSE snmp_version END"
         ))
 
 

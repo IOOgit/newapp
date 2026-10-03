@@ -49,10 +49,30 @@ def days_since(value) -> int | None:
     return max((dt.datetime.now(dt.timezone.utc) - value).days, 0)
 
 
+def bitrate(value):
+    if value is None:
+        return "—"
+    for unit in ("bit/s", "Kbit/s", "Mbit/s", "Gbit/s"):
+        if abs(value) < 1000 or unit == "Gbit/s":
+            return f"{value:.1f} {unit}"
+        value /= 1000
+
+
+def uptime(value):
+    if value is None:
+        return "—"
+    seconds = int(value) // 100
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    return f"{days} д {hours:02}:{rest // 60:02}:{rest % 60:02}"
+
+
 def register(templates) -> None:
     """Подключить фильтры и глобальные переменные к окружению Jinja."""
     from app import __version__
 
+    templates.env.filters["bitrate"] = bitrate
+    templates.env.filters["uptime"] = uptime
     templates.env.filters["localtime"] = localtime
     templates.env.filters["days_since"] = days_since
     # Версия приложения доступна во всех шаблонах как {{ app_version }}.

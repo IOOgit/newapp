@@ -48,7 +48,7 @@ def start_scheduler() -> None:
     scheduler.add_job(
         switches.poll_all_switches,
         trigger=IntervalTrigger(seconds=settings.switch_poll_seconds),
-        id="switch_poll", name="Доступность коммутаторов",
+        id="switch_poll", name="Доступность и SNMP коммутаторов",
         max_instances=1, coalesce=True, replace_existing=True,
     )
 

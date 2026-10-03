@@ -222,18 +222,29 @@ class NetworkSwitch(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     host: Mapped[str] = mapped_column(String(255))
-    model: Mapped[str] = mapped_column(String(128), default="DH-CS4226-24ET-240")
+    model: Mapped[str] = mapped_column(String(128), default="")
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), default=None)
-    snmp_port: Mapped[int] = mapped_column(Integer, default=80)  # TCP-порт управления
-    snmp_version: Mapped[str] = mapped_column(String(8), default="none")
+    management_port: Mapped[int] = mapped_column(Integer, default=80)
+    snmp_port: Mapped[int] = mapped_column(Integer, default=161)
+    snmp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    snmp_version: Mapped[str] = mapped_column(String(8), default="2c")
     community_enc: Mapped[str] = mapped_column(Text, default="")
     timeout: Mapped[float] = mapped_column(Float, default=2.0)
-    retries: Mapped[int] = mapped_column(Integer, default=0)
+    retries: Mapped[int] = mapped_column(Integer, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     reachable: Mapped[bool] = mapped_column(Boolean, default=False)
     last_attempt_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_seen: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    snmp_status: Mapped[str] = mapped_column(String(16), default="unknown")
+    snmp_last_seen: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    snmp_error_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    snmp_error: Mapped[str | None] = mapped_column(Text, default=None)
+    discovery_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    vendor: Mapped[str | None] = mapped_column(String(128), default=None)
+    detected_model: Mapped[str | None] = mapped_column(String(255), default=None)
+    firmware: Mapped[str | None] = mapped_column(String(255), default=None)
+    inventory: Mapped[dict] = mapped_column(JSON, default=dict)
     sys_name: Mapped[str | None] = mapped_column(String(255), default=None)
     sys_descr: Mapped[str | None] = mapped_column(Text, default=None)
     sys_object_id: Mapped[str | None] = mapped_column(String(255), default=None)
@@ -244,6 +255,8 @@ class NetworkSwitch(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     ports: Mapped[list["SwitchPort"]] = relationship(back_populates="switch", cascade="all, delete-orphan")
+    events: Mapped[list["SwitchEvent"]] = relationship(cascade="all, delete-orphan")
+    telemetry: Mapped[list["SwitchTelemetry"]] = relationship(cascade="all, delete-orphan")
 
 
 class SwitchPort(Base):
@@ -261,6 +274,9 @@ class SwitchPort(Base):
     name: Mapped[str | None] = mapped_column(String(255), default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     alias: Mapped[str | None] = mapped_column(String(255), default=None)
+    mac_address: Mapped[str | None] = mapped_column(String(64), default=None)
+    if_type: Mapped[int | None] = mapped_column(Integer, default=None)
+    physical: Mapped[bool] = mapped_column(Boolean, default=False)
     admin_status: Mapped[int | None] = mapped_column(Integer, default=None)
     oper_status: Mapped[int | None] = mapped_column(Integer, default=None)
     speed_mbps: Mapped[float | None] = mapped_column(Float, default=None)
@@ -278,6 +294,26 @@ class SwitchPort(Base):
     channel_ref_id: Mapped[int | None] = mapped_column(ForeignKey("channels.id", ondelete="SET NULL"), default=None)
     poe_index: Mapped[str | None] = mapped_column(String(64), default=None)
     switch: Mapped["NetworkSwitch"] = relationship(back_populates="ports")
+
+
+class SwitchEvent(Base):
+    """Изменения состояния коммутатора; не дублируются на каждом опросе."""
+    __tablename__ = "switch_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    switch_id: Mapped[int] = mapped_column(ForeignKey("network_switches.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(48))
+    if_index: Mapped[int | None] = mapped_column(Integer, default=None)
+    message: Mapped[str] = mapped_column(Text)
+
+
+class SwitchTelemetry(Base):
+    """Один компактный снимок устройства и портов вместо записи каждого OID."""
+    __tablename__ = "switch_telemetry"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    switch_id: Mapped[int] = mapped_column(ForeignKey("network_switches.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    data: Mapped[dict] = mapped_column(JSON)
 
 
 class ArchiveCoverage(Base):

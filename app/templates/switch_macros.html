@@ -1,0 +1,5 @@
+{% macro snmp_status(sw) %}
+{% set labels={'available':'OK','unknown':'не проверен','timeout':'таймаут','auth_error':'ошибка доступа','unavailable':'недоступен'} %}
+<span class="badge {{ 'ok' if sw.telemetry_available else 'warn' if sw.snmp_enabled and sw.snmp_status != 'unknown' else 'muted' }}">SNMP: {{ labels.get(sw.snmp_status,'не проверен') if sw.snmp_enabled else 'не настроен' }}{% if sw.snmp_status == 'available' and not sw.telemetry_available %} · данные устарели{% endif %}</span>
+{% endmacro %}
+{% macro watts(value) %}{{ ('%.1f W'|format(value)) if value is not none else '—' }}{% endmacro %}
