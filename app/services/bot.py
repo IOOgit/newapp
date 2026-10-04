@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from app.services import timesync
+
 import asyncio
 import io
 import logging
@@ -219,7 +221,7 @@ async def _handle_callback(http: httpx.AsyncClient, cb: dict) -> None:
             await build_client(device).reboot()
             note = f"🔄 {device.name}: команда перезагрузки отправлена"
         elif action == "st":
-            await build_client(device).sync_time()
+            await timesync.sync_device(build_client(device))
             note = f"🕐 {device.name}: время синхронизировано"
         else:
             note = "Неизвестная команда"

@@ -299,13 +299,12 @@ class HikvisionClient(NVRClient):
             raise FeatureUnavailable(f"snapshot: HTTP {resp.status_code}")
         return resp.content
 
-    async def sync_time(self) -> None:
-        # Берём текущий XML времени, подменяем localTime на локальное время сервера
-        # (с поясным смещением) и режим на ручной, затем PUT обратно.
+    async def sync_time(self, target: dt.datetime | None = None) -> None:
+        target = target or dt.datetime.now().astimezone()
         cur = await self._request("GET", "/ISAPI/System/time")
         if cur.status_code != 200:
             raise FeatureUnavailable(f"time GET: HTTP {cur.status_code}")
-        now_iso = dt.datetime.now().astimezone().replace(microsecond=0).isoformat()
+        now_iso = target.replace(microsecond=0).isoformat()
         body = re.sub(r"<localTime>.*?</localTime>", f"<localTime>{now_iso}</localTime>", _body(cur))
         body = re.sub(r"<timeMode>.*?</timeMode>", "<timeMode>manual</timeMode>", body)
         resp = await self._request(

@@ -46,8 +46,9 @@ async def test_worklist_collects_issues(db):
 
         data = (await c.get("/api/worklist")).json()
         kinds = {i["kind"] for i in data["issues"] if i["device_id"] == did}
-        # offline-канал, проблема качества и отсутствие архива должны всплыть
-        assert {"channel", "quality", "archive"} <= kinds
+        # Контроль качества убран из панели; старые quality-данные не создают проблему.
+        assert {"channel", "archive"} <= kinds
+        assert "quality" not in kinds
         assert data["summary"]["critical"] >= 2  # offline + нет архива
         assert all(i["ack"] is None for i in data["issues"])
 

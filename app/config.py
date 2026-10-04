@@ -42,10 +42,14 @@ class Settings(BaseSettings):
     recording_max_age_minutes: int = Field(default=15, ge=1, le=1440)
     recording_window_minutes: int = Field(default=45, ge=1, le=1440)
 
-    # Коммутаторы: проверка TCP-доступности с ограничением нагрузки.
-    switch_poll_seconds: int = Field(default=60, ge=10, le=3600)
+    # Коммутаторы: TCP и SNMP в общем ограниченном пуле фоновых задач.
+    switch_poll_seconds: int = Field(default=30, ge=10, le=3600)
     switch_poll_timeout_seconds: int = Field(default=30, ge=5, le=120)
     switch_max_concurrent_polls: int = Field(default=4, ge=1, le=20)
+    switch_discovery_seconds: int = Field(default=21600, ge=60, le=604800)
+    switch_telemetry_seconds: int = Field(default=60, ge=15, le=3600)
+    switch_telemetry_days: int = Field(default=3, ge=1, le=30)
+    switch_event_days: int = Field(default=30, ge=1, le=365)
 
     # Контроль качества картинки (компьютерное зрение)
     quality_check_minutes: int = 0          # период проверки, 0 = выключено

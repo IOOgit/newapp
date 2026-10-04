@@ -12,6 +12,7 @@
     </select>
     <button onclick="bulkRun('poll')">Опросить</button>
     <button onclick="bulkRun('sync_time')">Синхр. время</button>
+    <a href="/time-settings" class="bus-btn">Настройки времени</a>
     <button onclick="bulkRun('archive_check')">Проверить архив</button>
     <button id="add-device-btn" class="primary">+ Устройство</button>
   </div>
@@ -108,16 +109,42 @@
   </div>
 </section>
 
-{# Панель «Парк · N NVR» — изометрическая стойка (строит iso.js из /api/devices + /api/worklist) #}
-<div class="blueprint rack-panel" id="side-rack" hidden>{{ corners() }}
-  <div style="flex:none">
-    <div class="rack-cap" id="rack-cap">Парк NVR</div>
-    <svg id="rack-svg" fill="none" stroke-linejoin="round"></svg>
-  </div>
-  <div class="rack-side">
-    <div class="rack-legend" id="rack-legend"></div>
+{% if switches %}
+<link rel="stylesheet" href="/static/switches.css?v={{ app_version }}">
+<div class="chart-card" style="margin-top:22px">
+  <div class="chart-head"><h3>Коммутаторы · {{ switches|length }}</h3><a href="/switches" class="sub">Все коммутаторы →</a></div>
+  <div class="sw-summary-list">
+  {% for sw in switches[:8] %}<a class="sw-summary-link" href="/switches/{{ sw.id }}"><span class="dot {{ sw.health.state }}" aria-hidden="true"></span><span class="sw-summary-copy">{{ sw.name }} · {{ sw.health.label }} · SNMP: {{ 'OK' if sw.telemetry_available else 'не настроен' if not sw.snmp_enabled else 'нет свежих данных' }}{% if sw.summary.ports_total is not none %} · {{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }}/{{ sw.summary.ports_total }} Up{% endif %}</span></a>{% endfor %}
   </div>
 </div>
+{% endif %}
+
+{# Интерактивная стойка: сводка из /api/devices и /api/worklist. #}
+<link rel="stylesheet" href="/static/rack.css?v={{ app_version }}">
+<section class="blueprint rack-panel" id="side-rack" aria-labelledby="rack-cap" hidden>{{ corners() }}
+  <div class="rack-heading">
+    <div><div class="rack-kicker">Виртуальная стойка</div><h2 id="rack-cap">Парк NVR</h2></div>
+    <button type="button" id="rack-refresh"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 11a7 7 0 0 0-12-5L4 9m1 4a7 7 0 0 0 12 5l3-3"/></svg>Обновить сводку</button>
+  </div>
+  <div class="rack-layout">
+    <div class="rack-visual">
+      <div class="rack-scene"><svg id="rack-svg" role="group" aria-label="Регистраторы. Выбор блока — Enter; переход — стрелки вверх и вниз." fill="none" stroke-linejoin="round"></svg></div>
+      <div class="rack-pagination" id="rack-pagination" hidden><button type="button" id="rack-prev" aria-label="Предыдущая секция">←</button><span id="rack-page-label"></span><button type="button" id="rack-next" aria-label="Следующая секция">→</button></div>
+      <p class="rack-hint">Выберите блок — он выйдет из стойки.<br>↑ / ↓ — выбор с клавиатуры.</p>
+    </div>
+    <div class="rack-side">
+      <div class="rack-legend" id="rack-legend" aria-label="Состояние парка"></div>
+      <section class="rack-detail" id="rack-detail" aria-labelledby="rack-device-name" hidden>
+        <div class="rack-detail-label">Выбранный регистратор<span class="rack-status"><i aria-hidden="true"></i><span id="rack-device-status"></span></span></div>
+        <h3 id="rack-device-name"></h3>
+        <dl class="rack-device-info"><div><dt>Адрес</dt><dd id="rack-device-host"></dd></div><div><dt>Модель</dt><dd id="rack-device-model"></dd></div><div><dt>Последняя связь</dt><dd id="rack-device-seen"></dd></div><div><dt>Замечания</dt><dd id="rack-device-issues"></dd></div></dl>
+        <ul id="rack-device-notes"></ul>
+        <a class="bus-btn" id="rack-device-link">Открыть карточку <span aria-hidden="true">↗</span></a>
+      </section>
+    </div>
+  </div>
+  <div class="rack-footer"><span>Сначала устройства, требующие внимания</span><span id="rack-update-note" role="status" aria-live="polite"></span></div>
+</section>
 
 {% if not archive.day %}
 <h2>Архив записи</h2>

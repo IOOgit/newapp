@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>Синхронизация времени</h1><a href="/">← Дашборд</a></div>
+<p>Дешборд получает время от NTP и передаёт его всем включённым регистраторам через API.
+Расписание работает при закрытом браузере, пока сервер дешборда запущен.</p>
+<form id="time-form" class="chart-card" style="max-width:680px;display:grid;gap:16px">
+  <label>NTP-сервер <input name="server" maxlength="253" placeholder="IP или домен, например pool.ntp.org"></label>
+  <label>UDP-порт <input name="port" type="number" min="1" max="65535" required value="123"></label>
+  <label><input name="enabled" type="checkbox"> Синхронизировать ежедневно</label>
+  <label>Время запуска <input name="time" type="time" required value="03:00"></label>
+  <label>Часовой пояс расписания и времени на регистраторах
+    <input name="timezone" list="timezones" required value="Asia/Vladivostok">
+    <datalist id="timezones"><option value="Asia/Vladivostok">Хабаровск, UTC+10</option><option value="Europe/Moscow">Москва</option><option value="UTC"></option></datalist>
+  </label>
+  <p>Укажите часовой пояс ваших регистраторов. Пустой NTP-сервер сохраняет прежний режим ручной синхронизации — по часам сервера дешборда. Для расписания NTP обязателен.</p>
+  <div><button type="submit" class="primary" disabled>Сохранить</button> <button type="button" id="test-ntp" disabled>Проверить NTP</button></div>
+  <div id="time-message" role="status" aria-live="polite"></div>
+</form>
+<p id="next-run"></p>
+<h2>Последний запуск по расписанию</h2>
+<div id="last-run"></div>
+<script src="/static/timesync.js" defer></script>
+{% endblock %}

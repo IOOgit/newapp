@@ -1,68 +1,34 @@
 {% extends "base.html" %}
+{% from "switch_macros.html" import snmp_status, watts %}
 {% block title %}Коммутаторы — NVR Monitor{% endblock %}
 {% block content %}
-{% set selected = selected|default(group_id|default(none)) %}
+<link rel="stylesheet" href="/static/switches.css?v={{ app_version }}">
 {% set status_classes = {'green':'ok', 'yellow':'warn', 'red':'err', 'gray':'muted'} %}
 <a href="/" class="muted">← к дашборду</a>
-<div class="device-head">
-  <h1>Коммутаторы камер</h1>
-  <div class="device-actions"><button type="button" id="sw-create-open">+ Коммутатор</button></div>
-</div>
-<div class="err-plate">
-  <span><b>DH-CS4226-24ET-240 не поддерживает SNMP.</b> Система проверяет только доступность веб-интерфейса по TCP. Состояние портов, PoE, трафик и ошибки не контролируются.</span>
-</div>
+<div class="device-head"><h1>Коммутаторы камер</h1><div class="device-actions"><button type="button" data-open="sw-form-modal">+ Коммутатор</button></div></div>
 <form method="get" action="/switches" class="bulkbar">
   <label for="sw-group">Объект</label>
   <select id="sw-group" name="group_id" onchange="location.href=this.value?'/switches?group_id='+encodeURIComponent(this.value):'/switches'">
     <option value="">Все объекты</option>
-    {% for group in groups %}<option value="{{ group.id }}" {{ 'selected' if selected == group.id else '' }}>{{ group.name }}</option>{% endfor %}
+    {% for group in groups %}<option value="{{ group.id }}" {{ 'selected' if group_id == group.id else '' }}>{{ group.name }}</option>{% endfor %}
   </select>
 </form>
 <div class="table-wrap"><table class="grid">
-  <thead><tr><th>Коммутатор</th><th>Объект</th><th>Состояние</th><th>Метод контроля</th><th>Последняя проверка</th></tr></thead>
-  <tbody>
-  {% for sw in switches %}
-  <tr>
-    <td><a href="/switches/{{ sw.id }}"><strong>{{ sw.name }}</strong></a><div class="muted">{{ sw.host }}:{{ sw.management_port }} · {{ sw.model }}</div></td>
-    <td>{% set found=namespace(name='Без объекта') %}{% for group in groups %}{% if group.id==sw.group_id %}{% set found.name=group.name %}{% endif %}{% endfor %}{{ found.name }}</td>
-    <td><span class="badge {{ status_classes.get(sw.health.state,'muted') }}">{{ sw.health.label }}</span>{% for reason in sw.health.reasons %}<div class="muted">{{ reason }}</div>{% endfor %}</td>
-    <td>TCP веб-интерфейса<div class="muted">Телеметрии портов нет</div></td>
-    <td>{{ sw.last_seen|localtime('%d.%m.%Y %H:%M:%S') }}</td>
-  </tr>
-  {% else %}<tr><td colspan="5" class="muted">Коммутаторов пока нет.</td></tr>{% endfor %}
-  </tbody>
-</table></div>
-
-<div id="sw-create-modal" class="modal hidden"><div class="modal-card">
-  <h3>Добавить коммутатор</h3>
-  <form id="sw-create-form">
-    <label>Название<input name="name" required maxlength="255"></label>
-    <label>Объект<select name="group_id"><option value="">Без объекта</option>{% for group in groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
-    <label>Модель<select name="model"><option value="DH-CS4226-24ET-240">Dahua DH-CS4226-24ET-240</option></select></label>
-    <div class="row"><label>IP / имя хоста<input name="host" required maxlength="253"></label><label>TCP-порт веб-интерфейса<input name="management_port" type="number" min="1" max="65535" value="80" required></label></div>
-    <label>Таймаут, с<input name="timeout" type="number" min="0.5" max="5" step="0.5" value="2" required></label>
-    <label><input name="enabled" type="checkbox" checked style="width:auto"> Регулярно проверять доступность</label>
-    <p id="sw-create-error" class="err-text"></p>
-    <div class="actions"><button type="submit">Добавить</button><button type="button" class="secondary" id="sw-create-cancel">Отмена</button></div>
-  </form>
+<thead><tr><th>Коммутатор</th><th>Состояние</th><th>SNMP / время работы</th><th>Порты</th><th>Трафик ↓ / ↑</th><th>PoE</th><th>Проверка</th></tr></thead>
+<tbody>{% for sw in switches %}
+<tr>
+<td><a href="/switches/{{ sw.id }}"><strong>{{ sw.name }}</strong></a><div class="muted">{{ sw.host }} · {{ sw.model or sw.detected_model or 'Модель не определена' }}</div>{% for group in groups if group.id == sw.group_id %}<div class="muted">{{ group.name }}</div>{% endfor %}</td>
+<td><span class="badge {{ status_classes[sw.health.state] }}">{{ sw.health.label }}</span>{% for reason in sw.health.reasons %}<div class="muted">{{ reason }}</div>{% endfor %}</td>
+<td>{{ snmp_status(sw) }}<div class="muted">{{ (sw.uptime_ticks if sw.telemetry_available else none)|uptime }}</div></td>
+<td>{% if sw.summary.ports_total is not none %}{{ sw.summary.ports_up if sw.summary.ports_up is not none else '—' }} / {{ sw.summary.ports_total }} Up{% else %}—{% endif %}{% if sw.summary.errors is not none %}<div class="muted">Ошибок: {{ sw.summary.errors }}</div>{% endif %}</td>
+<td>↓ {{ sw.summary.in_bps|bitrate }}<br>↑ {{ sw.summary.out_bps|bitrate }}</td>
+<td>{{ watts(sw.summary.poe_used_w) }} / {{ watts(sw.summary.poe_budget_w) }}{% if sw.summary.poe_active is not none %}<div class="muted">Активных: {{ sw.summary.poe_active }}</div>{% endif %}</td>
+<td>{{ sw.last_seen|localtime('%d.%m %H:%M:%S') }}</td>
+</tr>{% else %}<tr><td colspan="7" class="muted">Коммутаторов пока нет. Добавьте устройство для мониторинга.</td></tr>{% endfor %}
+</tbody></table></div>
+<div id="sw-form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sw-form-title"><div class="modal-card">
+<h3 id="sw-form-title">Добавить коммутатор</h3>
+<form data-switch-form>{% set sw = {} %}{% include "switch_form.html" %}</form>
 </div></div>
 {% endblock %}
-{% block scripts %}
-<script>
-(() => {
-  const modal=document.getElementById('sw-create-modal'), form=document.getElementById('sw-create-form');
-  document.getElementById('sw-create-open').onclick=()=>modal.classList.remove('hidden');
-  document.getElementById('sw-create-cancel').onclick=()=>modal.classList.add('hidden');
-  form.onsubmit=async event=>{
-    event.preventDefault(); const values=new FormData(form);
-    const payload={name:values.get('name').trim(),host:values.get('host').trim(),model:values.get('model'),
-      group_id:values.get('group_id')?Number(values.get('group_id')):null,
-      management_port:Number(values.get('management_port')),timeout:Number(values.get('timeout')),enabled:values.has('enabled')};
-    const response=await fetch('/api/switches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const result=await response.json().catch(()=>({}));
-    if(!response.ok){document.getElementById('sw-create-error').textContent=Array.isArray(result.detail)?result.detail.map(x=>x.msg).join('; '):(result.detail||'Ошибка сохранения');return;}
-    location.href='/switches/'+result.id;
-  };
-})();
-</script>
-{% endblock %}
+{% block scripts %}<script src="/static/switches.js?v=1"></script>{% endblock %}

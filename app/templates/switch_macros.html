@@ -1,0 +1,29 @@
+{% macro snmp_status(sw) %}
+{% set labels={'available':'OK','unknown':'не проверен','timeout':'таймаут','auth_error':'ошибка доступа','unavailable':'недоступен'} %}
+<span class="badge {{ 'ok' if sw.telemetry_available else 'warn' if sw.snmp_enabled and sw.snmp_status != 'unknown' else 'muted' }}">SNMP: {{ labels.get(sw.snmp_status,'не проверен') if sw.snmp_enabled else 'не настроен' }}{% if sw.snmp_status == 'available' and not sw.telemetry_available %} · данные устарели{% endif %}</span>
+{% endmacro %}
+{% macro watts(value) %}{{ ('%.1f W'|format(value)) if value is not none else '—' }}{% endmacro %}
+
+{% macro port_socket(port, fresh) %}
+{% set name = port.name or 'ifIndex ' ~ port.if_index %}
+{% set powered = fresh and port.poe.get('status') == 3 %}
+{% set power_fault = fresh and port.poe.get('status') in (4, 6) %}
+<button type="button" class="sw-port sw-{{ port.health.state }}" data-port="{{ port.id }}"
+        title="{{ name }} · {{ port.alias or port.description or port.health.label }}"
+        aria-label="{{ name }}: {{ port.health.label }}{{ ', питание PoE подаётся' if powered else '' }}">
+  <span class="sw-port-label"><strong class="sw-port-name">{{ name }}</strong>{% if powered %}<span class="sw-port-poe">PoE</span>{% endif %}</span>
+  <svg class="sw-port-socket" viewBox="0 0 84 66" aria-hidden="true" focusable="false">
+    <rect class="sw-socket-bezel" x="1" y="7" width="82" height="58" rx="3"/>
+    <path class="sw-socket-highlight" d="M4 62V10H80"/>
+    <path class="sw-socket-rim" d="M9 14H75V43H67V51H58V58H26V51H17V43H9Z"/>
+    <path class="sw-socket-well" d="M12 17H72V40H64V48H55V55H29V48H20V40H12Z"/>
+    <path class="sw-socket-depth" d="M12 17H72V29H12Z"/>
+    <g class="sw-socket-pins">{% for x in range(23, 63, 5) %}<rect x="{{ x }}" y="17" width="3" height="13" rx=".6"/>{% endfor %}</g>
+    <path class="sw-socket-latch" d="M32 43H52V49H32ZM35 52H49"/>
+    <rect class="sw-socket-led sw-socket-status" x="5" y="1" width="12" height="4" rx="1"/>
+    <rect class="sw-socket-led sw-socket-power {{ 'is-powered' if powered else 'is-fault' if power_fault else '' }}" x="67" y="1" width="12" height="4" rx="1"/>
+  </svg>
+  <span class="sw-port-speed">{% if fresh and port.speed_mbps is not none %}{{ '%g'|format(port.speed_mbps / 1000) if port.speed_mbps >= 1000 else '%g'|format(port.speed_mbps) }} <span>{{ 'Гбит/с' if port.speed_mbps >= 1000 else 'Мбит/с' }}</span>{% else %}<span>—</span>{% endif %}</span>
+  <span class="sw-port-state"><i aria-hidden="true"></i>{{ port.health.label }}</span>
+</button>
+{% endmacro %}

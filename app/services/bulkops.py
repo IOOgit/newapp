@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from app.services import timesync
+
 import asyncio
 import datetime as dt
 import logging
@@ -61,7 +63,7 @@ async def _do(action: str, device_id: int) -> None:
     elif action == "sync_time":
         async with SessionLocal() as session:
             device = await crud.get_device(session, device_id)
-            await build_client(device).sync_time()
+            await timesync.sync_device(build_client(device))
         await poller.poll_device(device_id)  # сразу пересчитать дрейф
     elif action == "archive_check":
         target = dt.date.today() - dt.timedelta(days=1)
